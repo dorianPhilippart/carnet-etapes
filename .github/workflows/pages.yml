@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: pages
+  group: carnet-etapes-release
   cancel-in-progress: false
 jobs:
   build:
@@ -20,19 +20,40 @@ jobs:
           node-version: 22
       - run: npm test
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          path: dist
-  deploy:
+          name: site
+          path: dist/
+          include-hidden-files: true
+          if-no-files-found: error
+  publish:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      contents: write
       pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Publier
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: compiled
+      - name: Actualiser la branche de publication
+        working-directory: release
+        run: |
+          rsync -a --delete --exclude='.git' ../compiled/ ./
+          git add -A
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Publier le carnet ($GITHUB_SHA)"
+            git push origin HEAD:gh-pages
+          fi
+      - name: Demander la publication GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds" --silent
