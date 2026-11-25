@@ -20,7 +20,7 @@ export const demoTrip = {
   destination: 'Japon',
   startDate: '2027-04-10',
   endDate: '2027-04-16',
-  notes: 'De Tokyo à Kyoto, avec une halte à Hakone. Penser à télécharger le carnet avant le départ.',
+  notes: 'De Tokyo à Kyoto, avec une halte à Hakone. Prévoir une journée pour profiter des paysages autour du lac Ashi.',
   stops: stages.map(([day, time, title, place, category, notes], index) => ({
     id: 'c70d2e88-354a-4916-841c-' + String(index + 1).padStart(12, '0'),
     date: '2027-04-' + day, time, title, place, category, notes

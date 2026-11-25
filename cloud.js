@@ -40,13 +40,10 @@ async function request(path, { method = 'GET', token, body, headers = {} } = {})
   } finally { clearTimeout(timer); }
 }
 
-export function session() {
-  if (!configured) return null;
-  try {
-    const value = JSON.parse(localStorage.getItem(sessionKey));
-    return value?.user?.id && value.refresh_token ? value : null;
-  } catch { return null; }
-}
+// Older releases persisted this credential. Never resume or retain it on disk.
+try { localStorage.removeItem(sessionKey); } catch { /* Browser storage may be disabled. */ }
+let currentSession = null;
+export function session() { return currentSession; }
 
 function saveSession(value) {
   const record = {
@@ -54,7 +51,7 @@ function saveSession(value) {
     access_token: value.access_token, refresh_token: value.refresh_token,
     expires_at: value.expires_at || Math.floor(Date.now() / 1000) + value.expires_in
   };
-  localStorage.setItem(sessionKey, JSON.stringify(record));
+  currentSession = record;
   window.dispatchEvent(new Event('escale-session'));
   return record;
 }
@@ -93,17 +90,13 @@ export async function disconnect(expectedUserId) {
   await withLock(sessionKey, async () => {
     const current = session();
     if (current?.user.id !== expectedUserId) return;
-    localStorage.removeItem(sessionKey);
+    currentSession = null;
     window.dispatchEvent(new Event('escale-session'));
     // Local sign-out also works offline; request revocation for this device when reachable.
     try { await request('/auth/v1/logout?scope=local', { method: 'POST', token: current.access_token }); }
     catch { /* Local credentials have already been removed. */ }
   });
 }
-
-window.addEventListener('storage', event => {
-  if (!event.key || event.key === sessionKey) window.dispatchEvent(new Event('escale-session'));
-});
 
 async function rest(userId, query, options = {}) {
   const path = '/rest/v1/trips?' + new URLSearchParams(query);

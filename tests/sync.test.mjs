@@ -21,7 +21,7 @@ async function device(t) {
   globalThis.window = new EventTarget();
   globalThis.location = new URL('https://travel.test/escale/');
   globalThis.document = new EventTarget();
-  const data = new Map();
+  const data = new Map([['escale:session:https://project.test', 'old-token']]);
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
     getItem: key => data.get(key) ?? null,
     setItem: (key, value) => data.set(key, String(value)),
@@ -106,7 +106,7 @@ async function device(t) {
   }
 
   return {
-    store, rows, users, settled,
+    store, rows, users, settled, data,
     async login(email) { await cloud.authenticate(email, 'motdepasse-fictif', false); await settled(); },
     network(onLine) { navigator.onLine = onLine; window.dispatchEvent(new Event(onLine ? 'online' : 'offline')); },
     beforeWrite(callback) { beforeWrite = callback; },
@@ -114,79 +114,68 @@ async function device(t) {
   };
 }
 
-test('Un voyage importé reste consultable hors ligne et sa suppression est synchronisée au retour du réseau', async t => {
+test('La session et le voyage restent en mémoire, les mutations exigent un compte en ligne', async t => {
   const d = await device(t);
-  const [guestTrip] = d.store.getTrips();
+  const [trip] = d.store.getTrips();
+  assert.equal(d.data.size, 0);
+  await assert.rejects(d.store.saveTrip(trip), /Connectez/);
   await d.login('alice@example.test');
-  assert.deepEqual(d.store.getTrips(), []);
-  await d.store.importGuest();
-  await d.settled();
-  assert.deepEqual([...d.rows.values()][0].payload, guestTrip);
-  d.network(false);
+  await d.store.saveTrip(trip);
   const [original] = d.store.getTrips();
-  await d.store.deleteTrip(original.id, original);
+  d.network(false);
   assert.deepEqual(d.store.getTrips(), []);
-  assert.equal(d.rows.size, 1);
-  assert.equal(d.store.syncInfo().pending, 1);
+  await assert.rejects(d.store.deleteTrip(trip.id, original), /Internet/);
   d.network(true);
   await d.settled();
+  assert.deepEqual(d.store.getTrips(), [trip]);
+  await d.store.deleteTrip(trip.id, d.store.getTrips()[0]);
   assert.equal(d.rows.size, 0);
+  assert.equal(d.data.size, 0);
 });
 
-test('Une écriture concurrente entre lecture et envoi conserve les deux itinéraires', async t => {
+test('Une modification concurrente conserve la version déjà enregistrée', async t => {
   const d = await device(t);
+  const [trip] = d.store.getTrips();
   await d.login('alice@example.test');
-  await d.store.importGuest();
-  await d.settled();
-  d.network(false);
+  await d.store.saveTrip(trip);
   const [original] = d.store.getTrips();
-  await d.store.saveTrip({ ...original, title: 'Mon carnet hors ligne' }, original);
-  assert.equal(d.store.getTrips()[0].title, 'Mon carnet hors ligne');
   d.beforeWrite(row => {
     row.revision = crypto.randomUUID();
-    row.payload = { ...row.payload, title: 'Mon carnet sur le téléphone' };
+    row.payload = { ...row.payload, title: 'Nouvelle version' };
   });
-  d.network(true);
-  await d.settled();
-  assert.equal(d.store.syncInfo().conflict, true);
-  const expected = ['Mon carnet hors ligne (copie locale)', 'Mon carnet sur le téléphone'];
-  assert.deepEqual(d.store.getTrips().map(trip => trip.title).sort(), expected);
-  assert.deepEqual([...d.rows.values()].map(row => row.payload.title).sort(), expected);
+  await assert.rejects(d.store.saveTrip({ ...trip, title: 'Autre' }, original), /a changé/);
+  assert.equal(d.store.getTrips()[0].title, 'Nouvelle version');
 });
 
-test('Deux comptes sur le même appareil conservent des espaces distincts', async t => {
+test('Le carnet du compte précédent reste inaccessible', async t => {
   const d = await device(t);
+  const [trip] = d.store.getTrips();
   await d.login('alice@example.test');
-  await d.store.importGuest();
-  await d.settled();
-  const [alice] = d.store.getTrips();
+  await d.store.saveTrip(trip);
+  const [original] = d.store.getTrips();
   await d.store.signOut();
   await d.login('bob@example.test');
   assert.deepEqual(d.store.getTrips(), []);
-  await assert.rejects(d.store.saveTrip(alice, alice), /compte actif/);
-  await d.store.importGuest();
-  await d.settled();
-  assert.equal(d.rows.size, 2);
-  const [bob] = d.store.getTrips();
-  await d.store.saveTrip({ ...bob, title: 'Voyage de Bob' }, bob);
-  await d.settled();
-  await d.store.signOut();
-  await d.login('alice@example.test');
-  assert.equal(d.store.getTrips().length, 1);
-  assert.deepEqual(d.store.getTrips()[0], alice);
+  await assert.rejects(d.store.saveTrip(original, original), /compte actif/);
 });
 
-test('Une réponse réseau perdue après insertion ne duplique pas le voyage', async t => {
+test('La révision confirme une écriture malgré la perte de sa réponse', async t => {
   const d = await device(t);
+  const [trip] = d.store.getTrips();
   await d.login('alice@example.test');
   d.loseNextAcknowledgement();
-  await d.store.importGuest();
-  for (let i = 0; i < 1000 && d.store.syncInfo().state !== 'error'; i++) await nextTurn();
-  assert.equal(d.store.syncInfo().state, 'error');
-  assert.equal(d.store.syncInfo().pending, 1);
+  await d.store.saveTrip(trip);
+  assert.deepEqual(d.store.getTrips(), [trip]);
   assert.equal(d.rows.size, 1);
-  await d.settled();
-  assert.equal(d.store.syncInfo().conflict, false);
-  assert.equal(d.store.getTrips().length, 1);
+});
+
+test('Un ancien voyage importé deux fois garde une seule copie sans écraser une modification', async t => {
+  const d = await device(t);
+  const [trip] = d.store.getTrips();
+  await d.login('alice@example.test');
+  assert.equal(await d.store.saveTrip(trip), trip.id);
+  assert.equal(await d.store.saveTrip({ ...trip }), trip.id);
+  await assert.rejects(d.store.saveTrip({ ...trip, title: 'Autre' }), /a changé/);
   assert.equal(d.rows.size, 1);
+  assert.deepEqual(d.store.getTrips(), [trip]);
 });
