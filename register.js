@@ -2,6 +2,6 @@
 if (window.isSecureContext && 'serviceWorker' in navigator) {
   const worker = new URL('./sw.js', import.meta.url);
   navigator.serviceWorker.register(worker, { updateViaCache: 'none' }).catch(error => {
-    console.warn("L’installation du mode hors ligne a échoué.", error.name);
+    console.warn("La mise à jour de l’application a échoué.", error.name);
   });
 }

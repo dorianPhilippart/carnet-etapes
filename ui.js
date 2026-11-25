@@ -20,11 +20,11 @@ const duration = trip => Math.max(1,dayDistance(trip.startDate,trip.endDate)+1);
 const plural = (n,singular,other = singular+'s') => n+' '+(n===1 ? singular : other);
 const ordered = stops => [...stops].sort((a,b)=>a.date.localeCompare(b.date) || (a.time || '99:99').localeCompare(b.time || '99:99'));
 let selectedId;
-try { selectedId = sessionStorage.getItem('escale.activeTrip'); } catch {}
+try { sessionStorage.removeItem('escale.activeTrip'); } catch {}
 let date, dateTrip, allDays = false, noticeTimeout, modalState;
 const page = () => Object.hasOwn(pages,location.hash.slice(1)) ? location.hash.slice(1) : 'itineraire';
 const activeTrip = (trips=getTrips()) => trips.find(t => t.id === selectedId) || trips[0];
-const remember = id => { selectedId=id; try { sessionStorage.setItem('escale.activeTrip',id); } catch {} };
+const remember = id => { selectedId=id; };
 function openPage(name) {
   if (page() === name) render();
   else location.hash = name;
@@ -110,9 +110,9 @@ function notesPage(trip) {
 function render() {
   const trips=getTrips(), trip=activeTrip(trips), view=page();
   const info=syncInfo();
-  if(editor.open && modalState?.owner !== (info.user?.id ?? null)) {
+  if(editor.open && (!info.online || info.state==='error' || info.state==='reauth' || modalState?.owner !== (info.user?.id ?? null))) {
     editor.close();
-    toast('Le compte actif a changé. Le carnet a été actualisé.');
+    editor.replaceChildren(); modalState=null;
   }
   const connectionText=!info.online?'Hors connexion':info.state==='syncing'?'Synchronisation…':info.state==='error'?'Synchronisation interrompue':info.state==='reauth'?'Session expirée':info.user && info.lastSync?'À jour':'Synchronisation';
   document.querySelector('#connection').innerHTML=icon('cloud',17)+'<span>'+connectionText+'</span>';
@@ -122,9 +122,20 @@ function render() {
   document.title=pages[view]+' · Carnet d’étapes';
   document.querySelector('#navigation').innerHTML=Object.entries(pages).map(([key,label])=>`<a href="#${key}" ${key===view?'aria-current="page"':''}>${icon({voyages:'bag',itineraire:'route',notes:'book'}[key],20)}<span>${label}</span></a>`).join('');
   document.querySelector('#crumb').innerHTML=`${icon('compass',17)}<span>Mon espace</span>${icon('right',13)}<strong>${pages[view]}</strong>`;
+  if(!info.online || info.state==='reauth' || info.state==='error') {
+    main.innerHTML='<section class="empty-state"><h1>Carnet indisponible</h1><p>Vérifiez votre connexion pour accéder aux voyages.</p>'+button('account','Ouvrir mon compte','person')+'</section>';
+    return;
+  }
   if(view==='voyages') main.innerHTML=`<div class="page-heading"><h1>Mes voyages</h1>${trips.length?button('new-trip','Nouveau voyage','plus','primary'):''}</div>${trips.length?`<div class="trip-grid">${travelCards(trips)}</div>`:empty()}`;
   else if(!trip) main.innerHTML=`<div class="page-heading"><h1>${view==='itineraire'?'Mon itinéraire':pages[view]}</h1></div>${empty()}`;
   else main.innerHTML=view==='notes'?notesPage(trip):itinerary(trip);
+  if(!info.user) {
+    main.querySelectorAll('[data-action="new-trip"], [data-action="edit-notes"], [data-action="add-stop"]').forEach(control=>{
+      control.dataset.action='account'; control.textContent='Se connecter';
+    });
+    main.querySelector('.hero-label')?.replaceChildren('Voyage de démonstration');
+    main.querySelector('[data-action="trip-menu"]')?.remove();
+  }
 }
 function showDialog(title,body,state) {
   modalState={...state,owner:syncInfo().user?.id ?? null};
@@ -160,7 +171,7 @@ function stopDetail(trip,stop) {
     ${stop.time?`<p>${icon('clock',18)}${text(stop.time)}</p>`:''}
     ${stop.place?`<p>${icon('pin',18)}${text(stop.place)} <a href="https://www.google.com/maps/search/?api=1&amp;query=${text(encodeURIComponent(stop.place))}" target="_blank" rel="noopener noreferrer">Carte</a></p>`:''}
     ${stop.notes?`<div class="detail-note">${text(stop.notes)}</div>`:''}
-    </div><footer class="form-actions">${button('remove-stop','Supprimer','trash','danger-text')}${button('edit-stop','Modifier','edit','primary')}</footer>`,{type:'detail',trip,stop});
+    </div><footer class="form-actions">${syncInfo().user ? button('remove-stop','Supprimer','trash','danger-text')+button('edit-stop','Modifier','edit','primary') : button('close','Fermer','close')}</footer>`,{type:'detail',trip,stop});
 }
 function tripMenu(trip) {
   showDialog(trip.title,`<div class="menu-options">${button('edit-trip','Modifier le voyage','edit')}${button('switch-trip','Mes voyages','bag')}${button('remove-trip','Supprimer le voyage','trash','danger-text')}</div>`,{type:'options',trip});
@@ -260,6 +271,8 @@ document.addEventListener('click',event=>{
   if(act==='day' || act==='prev-week' || act==='next-week') document.querySelector('.day-tab.active')?.focus({preventScroll:true});
   if(act==='toggle-days') document.querySelector('[data-action="toggle-days"]')?.focus({preventScroll:true});
 });
+editor.addEventListener('close',()=>{ if(!editor.open){editor.replaceChildren();modalState=null;} });
+window.addEventListener('offline',render);
 window.addEventListener('hashchange',()=>{render();main.focus({preventScroll:true});window.scrollTo(0,0);});
 document.querySelector('#brand-mark').innerHTML=logo;
 document.querySelector('#account-icon').innerHTML=icon('person',18);

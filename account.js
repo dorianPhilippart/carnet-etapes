@@ -1,5 +1,8 @@
 import { authenticate } from './cloud.js';
-import { syncInfo, synchronize, signOut, guestTrips, importGuest } from './store.js';
+import { syncInfo, synchronize, signOut, saveTrip } from './store.js';
+import {pruneSynced, legacyGroups, recoverGroup, discardGroup} from './legacy.js';
+
+pruneSynced();
 
 // Confirmation links may carry an implicit grant. The user signs in explicitly
 // with a password; remove callback credentials from browser history immediately.
@@ -18,7 +21,7 @@ document.body.append(dialog);
 let mode = 'signin';
 let busy = false;
 let opener;
-let confirmLogout = false;
+
 let message = '';
 
 function el(tag, text, className) {
@@ -37,7 +40,7 @@ function button(text, handler, primary = false) {
 }
 
 export function getAccountLabel() {
-  return syncInfo().user ? 'Mon compte' : 'Compte local';
+  return syncInfo().user ? 'Mon compte' : 'Se connecter';
 }
 
 function updateLabel() {
@@ -45,11 +48,10 @@ function updateLabel() {
 }
 
 function statusText(info) {
-  if (!info.online) return 'Hors connexion. Vos changements seront envoyés au retour du réseau.';
+  if (!info.online) return 'Connexion Internet nécessaire pour accéder au carnet.';
   if (info.state === 'syncing') return 'Synchronisation en cours…';
   if (info.state === 'reauth') return 'Votre session a expiré. Reconnectez-vous pour reprendre la synchronisation.';
-  if (info.state === 'error') return 'Synchronisation interrompue. Vos changements restent sur cet appareil.';
-  if (info.pending) return 'Des changements attendent d’être envoyés.';
+  if (info.state === 'error') return 'Connexion au carnet interrompue. Réessayez en ligne.';
   if (info.lastSync) return 'À jour à ' + info.lastSync.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '.';
   return 'Connexion au carnet en ligne…';
 }
@@ -120,16 +122,15 @@ function render() {
   const header = el('header');
   header.append(title, close);
   const body = el('div', '', 'acct-body');
-  if (!info.configured) {
-    body.append(el('h3', 'Carnet sur cet appareil'),
-      el('p', 'Vos voyages sont enregistrés dans ce navigateur et restent disponibles hors connexion.'),
-      el('p', 'La synchronisation entre appareils sera disponible dès qu’un projet Supabase sera relié à cette installation.'));
+  if (!info.online) {
+    body.append(el('p','Reconnectez cet appareil à Internet pour accéder à votre carnet.'));
+  } else if (!info.configured) {
+    body.append(el('p','Le service de comptes est indisponible.'));
   } else if (info.user && mode !== 'reauth') {
     body.append(el('p', info.user.email, 'acct-email'));
     const status = el('p', statusText(info), 'acct-status');
     status.setAttribute('role', 'status');
     body.append(status);
-    if (info.conflict) body.append(el('p', 'Un voyage avait aussi changé sur un autre appareil. Sa version distante a été conservée. Toute modification locale concurrente se trouve dans un voyage portant la mention « copie locale ».'));
     if (info.state === 'reauth') {
       body.append(button('Me reconnecter', () => { mode = 'reauth'; render(); }, true));
     } else {
@@ -137,29 +138,36 @@ function render() {
       sync.disabled = busy || !info.online || info.state === 'syncing';
       body.append(sync);
     }
-    if (guestTrips().length) {
-      const group = el('div', '', 'acct-group');
-      group.append(el('h3', 'Carnet local'), el('p', 'Vous pouvez copier les voyages du mode local dans ce compte.'),
-        button('Copier mes voyages locaux', async () => {
-          try { await importGuest(); message = 'Les voyages locaux ont été copiés dans votre compte.'; }
-          catch (error) { message = error.message; }
-          render();
+    for (const group of legacyGroups(info.user.id)) {
+      const section = el('section', '', 'acct-group');
+      const owner = info.user.id;
+      const currentUser = () => syncInfo().user?.id;
+      section.append(el('h3', group.guest ? 'Ancien carnet invité' : 'Anciennes modifications sur cet appareil'));
+      if (group.trips) {
+        section.append(el('p', 'Récupérez les voyages sous forme de copies dans le compte '+info.user.email+'. Chaque copie locale est effacée après confirmation de son enregistrement en ligne.'));
+        section.append(button('Récupérer dans ce compte', async () => {
+          busy = true; render();
+          try {
+            await recoverGroup(group.key, owner, currentUser, saveTrip);
+            message = 'Récupération terminée.';
+          } catch { message = 'Récupération interrompue. Les éléments en attente sont conservés pour un nouvel essai.'; }
+          finally { busy = false; render(); }
         }));
-      body.append(group);
+      }
+      if (group.total > group.trips) section.append(el('p', 'Des entrées anciennes ne peuvent pas être importées. Les suppressions en attente ne sont pas appliquées au compte en ligne.'));
+      section.append(button('Effacer ces anciennes données', () => {
+        if (!window.confirm('Effacer définitivement ces anciennes données de cet appareil ? Les modifications non récupérées seront perdues.')) return;
+        discardGroup(group.key, owner, currentUser); render();
+      }));
+      body.append(section);
     }
-    if (confirmLogout) {
-      body.append(el('p', 'Des changements attendent la synchronisation. En vous déconnectant, vous effacerez ces changements de cet appareil.'),
-        button('Rester connecté', () => { confirmLogout = false; render(); }, true),
-        button('Effacer et me déconnecter', logout));
-    } else body.append(button('Me déconnecter', () => {
-      if (syncInfo().pending) { confirmLogout = true; render(); }
-      else void logout();
-    }));
+    body.append(button('Me déconnecter', logout));
   } else {
     const register = mode === 'signup';
     body.append(el('p', register
       ? 'Créez un compte pour retrouver vos itinéraires sur ordinateur et téléphone.'
       : 'Connectez-vous pour retrouver vos itinéraires sur tous vos appareils.'));
+    if (legacyGroups(null).length) body.append(el('p','Un ancien carnet invité est présent sur cet appareil. Connectez-vous pour le récupérer ou l’effacer.'));
     const form = el('form');
     accountFields(form, register, mode === 'reauth' ? info.user?.email : '');
     body.append(form);
@@ -177,14 +185,14 @@ function render() {
 
 async function logout() {
   busy = true;
-  try { await signOut(); mode = 'signin'; confirmLogout = false; message = ''; }
+  try { await signOut(); mode = 'signin'; message = ''; }
   finally { busy = false; render(); }
 }
 
 function openAccount(initialMessage = '') {
   if (dialog.open) return;
   opener = document.activeElement;
-  mode = 'signin'; message = initialMessage; confirmLogout = false;
+  mode = 'signin'; message = initialMessage;
   render();
   dialog.showModal();
 }
@@ -208,3 +216,5 @@ if (confirmation && syncInfo().configured && !syncInfo().user) {
     ? 'Le lien de confirmation a expiré ou ne peut plus être utilisé.'
     : 'Le lien de confirmation a été ouvert. Connectez-vous avec votre adresse et votre mot de passe.');
 }
+
+window.addEventListener('offline', () => { if(dialog.open){dialog.close(); dialog.replaceChildren();} });

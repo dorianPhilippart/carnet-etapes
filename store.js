@@ -1,93 +1,35 @@
-import { configured, session, withLock, listRows, writeRow, disconnect } from './cloud.js';
-import { SUPABASE_URL } from './config.js';
+import { configured, session, listRows, writeRow, disconnect } from './cloud.js';
 import { demoTrip } from './demo.js';
 
-const GUEST = 'guest';
-const prefix = 'escale:data:v1:' + (SUPABASE_URL || 'local') + ':';
-const storageKey = scope => scope === GUEST ? 'escale:data:v1:guest' : prefix + scope;
 const listeners = new Set();
-const owners = new WeakMap();
-const activeOwner = () => session()?.user.id || GUEST;
-let owner = activeOwner();
-let status = { state: 'idle', lastSync: null, conflict: false };
-let currentSync;
-let again = false;
+const snapshots = new WeakMap();
+const userId = () => session()?.user.id;
+let owner = userId();
+let rows = new Map();
+let epoch = 0;
+let state = 'idle';
+let lastSync = null;
+let queue = Promise.resolve();
 
 function notify() {
   for (const listener of listeners) listener();
   document.dispatchEvent(new Event('escale-sync'));
 }
-
 export function subscribe(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
-
-function read(scope) {
-  let raw = null;
-  try { raw = localStorage.getItem(storageKey(scope)); }
-  catch { /* Reading the example remains possible with browser storage disabled. */ }
-  if (raw !== null) return JSON.parse(raw);
-  if (scope !== GUEST) return {};
-  return { [demoTrip.id]: { id: demoTrip.id, trip: demoTrip, base: null, revision: null, dirty: false } };
-}
-
 export function getTrips() {
-  const scope = activeOwner();
-  return Object.values(read(scope)).filter(record => record.trip).map(({ trip }) => {
-    const snapshot = structuredClone(trip);
-    owners.set(snapshot, scope);
-    return snapshot;
+  if (!navigator.onLine) return [];
+  if (!owner) return [structuredClone(demoTrip)];
+  return [...rows.values()].map(row => {
+    const trip = structuredClone(row.payload);
+    snapshots.set(trip, { owner, revision: row.revision });
+    return trip;
   });
 }
-
-function pending(scope) {
-  return Object.values(read(scope)).filter(record => record.dirty).length;
-}
-
 export function syncInfo() {
-  const scope = activeOwner();
-  return { ...status, configured, user: session()?.user, online: navigator.onLine,
-    pending: scope === GUEST ? 0 : pending(scope) };
-}
-
-function change(scope, edit) {
-  return withLock(storageKey(scope), () => {
-    if (activeOwner() !== scope) throw new Error('Le compte actif a changé. Rouvrez le voyage.');
-    const records = read(scope);
-    const previous = JSON.stringify(records);
-    const result = edit(records);
-    const raw = JSON.stringify(records);
-    if (raw !== previous) {
-      try { localStorage.setItem(storageKey(scope), raw); }
-      catch { throw new Error('Le stockage de cet appareil est plein ou indisponible.'); }
-      notify();
-    }
-    return result;
-  });
-}
-
-function recordFor(trip, scope, base = null) {
-  return { id: trip.id, trip, base, revision: crypto.randomUUID(), dirty: scope !== GUEST };
-}
-
-// PostgreSQL jsonb can change object-key order without changing a trip.
-function sameDocument(a, b) {
-  if (a === b) return true;
-  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && sameDocument(a[key], b[key]));
-}
-
-function copyOf(trip) {
-  return { ...trip, id: crypto.randomUUID(), title: trip.title.slice(0, 130) + ' (copie locale)' };
-}
-
-function verifyOwner(original, scope) {
-  if (original && owners.has(original) && owners.get(original) !== scope) {
-    throw new Error('Le compte actif a changé. Rouvrez le voyage.');
-  }
+  return { configured, user: session()?.user, online: navigator.onLine, state, lastSync, pending: 0 };
 }
 
 function validDate(value) {
@@ -105,177 +47,118 @@ function validTrip(trip) {
       stop.date >= trip.startDate && stop.date <= trip.endDate && (!stop.time || typeof stop.time === 'string'));
 }
 
-export async function saveTrip(trip, original) {
-  const scope = activeOwner();
-  verifyOwner(original, scope);
-  if (!validTrip(trip)) {
-    throw new Error('Le format de ce voyage est invalide.');
+function run(operation) {
+  const ticket = epoch;
+  function check() {
+    if (!userId()) throw new Error('Connectez-vous pour modifier votre carnet.');
+    if (!navigator.onLine) throw new Error('Une connexion Internet est nécessaire.');
+    if (epoch !== ticket) throw new Error('Le compte actif ou la connexion a changé.');
   }
-  if (new Blob([JSON.stringify(trip)]).size > 900_000) throw new Error('Ce voyage dépasse la taille maximale.');
-  const id = await change(scope, records => {
-    let updated = structuredClone(trip);
-    if (original && !sameDocument(original, records[trip.id]?.trip)) {
-      updated = copyOf(updated);
-      status.conflict = true;
-    }
-    records[updated.id] = recordFor(updated, scope, records[updated.id]?.base);
-    return updated.id;
-  });
-  void synchronize();
-  return id;
-}
-
-export async function deleteTrip(id, original) {
-  const scope = activeOwner();
-  verifyOwner(original, scope);
-  await change(scope, records => {
-    const record = records[id];
-    if (!record) return;
-    if (original && !sameDocument(original, record.trip)) {
-      throw new Error('Ce voyage a changé. Vérifiez sa version actuelle avant de le supprimer.');
-    }
-    if (scope === GUEST) delete records[id];
-    else records[id] = { ...record, trip: null, dirty: true, revision: crypto.randomUUID() };
-  });
-  void synchronize();
-}
-
-export function guestTrips() {
-  return Object.values(read(GUEST)).filter(row => row.trip).map(row => row.trip);
-}
-
-export async function importGuest() {
-  const scope = activeOwner();
-  if (scope === GUEST) return;
-  await change(scope, records => {
-    for (const trip of guestTrips()) {
-      const existing = records[trip.id];
-      if (sameDocument(existing?.trip, trip)) continue;
-      const candidate = existing ? copyOf(trip) : trip;
-      records[candidate.id] = recordFor(candidate, scope);
-    }
-  });
-  void synchronize();
-}
-
-function clean(row) {
-  return { id: row.id, trip: row.payload, base: row.revision, revision: row.revision, dirty: false };
-}
-
-// Reconcile against a complete server snapshot. A divergent local edit gets a new
-// identity so that another device's version and an offline traveller's work both survive.
-function reconcile(records, rows, scope) {
-  const remote = new Map(rows.map(row => [row.id, row]));
-  for (const id of new Set([...Object.keys(records), ...remote.keys()])) {
-    const local = records[id];
-    const row = remote.get(id);
-    if (local?.dirty) {
-      if (local.trip && local.revision === row?.revision) {
-        records[id] = clean(row);
-        continue;
+  const result = queue.then(async () => {
+    check();
+    state = 'syncing';
+    notify();
+    try {
+      const value = await operation(check);
+      check();
+      state = 'idle';
+      lastSync = new Date();
+      return value;
+    } catch (error) {
+      if (epoch === ticket) {
+        rows.clear();
+        lastSync = null;
+        state = error.status === 401 || /refresh_token/.test(error.code || '') ? 'reauth' : 'error';
       }
-      if (!local.trip && !row) {
-        delete records[id];
-        continue;
-      }
-      if (local.base === (row?.revision ?? null)) continue;
-      if (local.trip) {
-        const duplicate = copyOf(local.trip);
-        records[duplicate.id] = recordFor(duplicate, scope);
-      }
-      status.conflict = true;
-    }
-    if (row) records[id] = clean(row);
-    else delete records[id];
+      throw error;
+    } finally { notify(); }
+  });
+  queue = result.catch(() => {});
+  return result;
+}
+
+async function reload(check) {
+  const list = await listRows(userId());
+  check();
+  if (list.some(row => row.id !== row.payload?.id || !validTrip(row.payload))) {
+    throw new Error('Un voyage reçu présente un format invalide.');
   }
-  return Object.values(records).filter(record => record.dirty);
-}
-
-async function syncOnce(scope) {
-  if (scope !== activeOwner() || !navigator.onLine) return;
-  status.state = 'syncing';
-  document.dispatchEvent(new Event('escale-sync'));
-  try {
-    const rows = await listRows(scope);
-    if (rows.some(row => row.id !== row.payload?.id || !validTrip(row.payload))) {
-      throw new Error('Un voyage reçu présente un format invalide.');
-    }
-    const changes = await change(scope, records => reconcile(records, rows, scope));
-    for (const entry of changes) {
-      if (activeOwner() !== scope) return;
-      if (!await writeRow(scope, entry)) {
-        again = true;
-        continue;
-      }
-      await change(scope, records => {
-        const current = records[entry.id];
-        if (!current) return;
-        if (current.revision !== entry.revision) {
-          // An edit was made while this HTTP request was in flight.
-          current.base = entry.trip ? entry.revision : null;
-          again = true;
-        } else if (entry.trip) {
-          current.base = entry.revision;
-          current.dirty = false;
-        } else delete records[entry.id];
-      });
-    }
-    if (activeOwner() === scope) {
-      status.state = 'idle';
-      status.lastSync = new Date();
-    }
-  } catch (error) {
-    if (activeOwner() === scope) {
-      status.state = error.status === 401 || /refresh_token/.test(error.code || '') ? 'reauth' : 'error';
-    }
-    again = false;
-  } finally {
-    document.dispatchEvent(new Event('escale-sync'));
-  }
+  rows = new Map(list.map(row => [row.id, row]));
 }
 
 export function synchronize() {
-  const scope = activeOwner();
-  if (scope === GUEST || !configured || !navigator.onLine) return Promise.resolve();
-  if (currentSync) {
-    again = true;
-    return currentSync;
+  if (!userId() || !navigator.onLine) return Promise.resolve();
+  return run(reload).catch(() => {});
+}
+
+// jsonb may reorder object keys when returning a previously imported document.
+function sameDocument(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length &&
+    keys.every(key => Object.hasOwn(b, key) && sameDocument(a[key], b[key]));
+}
+
+async function mutate(id, trip, original) {
+  const snapshot = original && snapshots.get(original);
+  if (original && (!snapshot || snapshot.owner !== userId() || original.id !== id)) {
+    throw new Error('Le compte actif a changé. Rouvrez le voyage.');
   }
-  currentSync = Promise.resolve(withLock('sync:' + prefix + scope, () => syncOnce(scope)))
-    .finally(() => {
-      currentSync = undefined;
-      if (again) { again = false; queueMicrotask(() => void synchronize()); }
+  const epochAtStart = epoch;
+  try {
+    return await run(async check => {
+      const change = { id, trip, base: snapshot?.revision ?? null, revision: crypto.randomUUID() };
+      let accepted;
+      try { accepted = await writeRow(userId(), change); }
+      catch (error) {
+        // If the response was lost, check the revision before declaring failure.
+        await reload(check);
+        const stored = rows.get(id);
+        if (trip ? stored?.revision !== change.revision : stored !== undefined) throw error;
+        return id;
+      }
+      check();
+      if (!accepted && !original && trip) {
+        await reload(check);
+        if (sameDocument(rows.get(id)?.payload, trip)) return id;
+      }
+      if (!accepted) throw new Error('Ce voyage a changé. Rouvrez sa dernière version avant de le modifier.');
+      if (trip) rows.set(id, { id, payload: structuredClone(trip), revision: change.revision });
+      else rows.delete(id);
+      return id;
     });
-  return currentSync;
+  } catch (error) {
+    if (epoch === epochAtStart && userId() && navigator.onLine) await synchronize();
+    throw error;
+  }
 }
-
+export async function saveTrip(trip, original) {
+  if (!validTrip(trip)) throw new Error('Le format de ce voyage est invalide.');
+  if (new Blob([JSON.stringify(trip)]).size > 900000) throw new Error('Ce voyage dépasse la taille maximale.');
+  return mutate(trip.id, trip, original);
+}
+export async function deleteTrip(id, original) {
+  if (!original) throw new Error('Rouvrez le voyage avant de le supprimer.');
+  return mutate(id, null, original);
+}
 export async function signOut() {
-  const scope = activeOwner();
-  if (scope === GUEST) return;
-  // Hide and clear this account's cached itineraries on this device.
-  await disconnect(scope);
-  await withLock(storageKey(scope), () => {
-    if (activeOwner() !== scope) localStorage.removeItem(storageKey(scope));
-  });
+  if (userId()) await disconnect(userId());
+}
+function reset() {
+  epoch++;
+  rows.clear();
+  state = 'idle';
+  lastSync = null;
+  owner = userId();
   notify();
 }
-
 window.addEventListener('escale-session', () => {
-  const next = activeOwner();
-  if (owner === next) return;
-  owner = next;
-  status = { state: 'idle', lastSync: null, conflict: false };
-  notify();
-  void synchronize();
+  if (owner !== userId()) { reset(); void synchronize(); }
 });
-window.addEventListener('storage', event => {
-  if (!event.key || event.key === storageKey(activeOwner())) notify();
-});
-window.addEventListener('online', () => { notify(); void synchronize(); });
-window.addEventListener('offline', notify);
+window.addEventListener('offline', reset);
+window.addEventListener('online', () => { reset(); void synchronize(); });
 window.addEventListener('focus', () => void synchronize());
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) void synchronize();
-});
-setInterval(() => { if (!document.hidden) void synchronize(); }, 45_000);
-queueMicrotask(() => void synchronize());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void synchronize(); });
+setInterval(() => { if (!document.hidden) void synchronize(); }, 45000);

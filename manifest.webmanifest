@@ -2,7 +2,7 @@
   "id": "./",
   "name": "Carnet d’étapes",
   "short_name": "Carnet d’étapes",
-  "description": "Planifiez vos voyages et retrouvez chaque étape de votre itinéraire, même hors ligne.",
+  "description": "Planifiez vos voyages et retrouvez chaque étape de votre itinéraire, depuis votre compte en ligne.",
   "lang": "fr",
   "dir": "ltr",
   "scope": "./",
