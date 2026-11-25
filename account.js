@@ -107,7 +107,8 @@ function accountFields(form, registration, email) {
       busy = false;
       submit.disabled = false;
       submit.textContent = registration ? 'Créer mon compte' : 'Me connecter';
-      dialog.querySelector('.acct-message').textContent = message;
+      const feedback = dialog.querySelector('.acct-message');
+      if (feedback) feedback.textContent = message;
     }
   });
 }

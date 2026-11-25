@@ -184,7 +184,8 @@ function notesForm(trip) {
 }
 function errorMessage(error) {
   const p=editor.querySelector('.form-error');
-  if(p){p.textContent=error.message || 'La modification n’a pas pu être enregistrée.'; p.hidden=false;}
+  const message=error.message || 'La modification n’a pas pu être enregistrée.';
+  if(editor.open && p){p.textContent=message; p.hidden=false;} else toast(message);
 }
 editor.addEventListener('submit', async event=>{
   event.preventDefault();
