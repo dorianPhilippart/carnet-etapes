@@ -2,6 +2,8 @@
 
 *Ton voyage, jour par jour.*
 
+[Ouvrir Carnet d’étapes](https://dorianphilippart.github.io/carnet-etapes/)
+
 Carnet d’étapes est un carnet de voyage en français pour préparer un séjour sur ordinateur et consulter chaque journée sur téléphone. Un itinéraire modifiable de sept jours entre Tokyo, Hakone et Kyoto permet de découvrir l’application.
 
 ## Utiliser le carnet
@@ -35,7 +37,7 @@ La table stocke une ligne par voyage et par propriétaire, avec un identifiant d
 
 ## Héberger
 
-Publiez le contenu de `dist/` sur un hébergeur statique HTTPS, à la racine ou dans un sous-répertoire. Le manifeste et le service worker utilisent des chemins relatifs. Sur GitHub Pages, choisissez **Settings → Pages → Source → GitHub Actions**, puis lancez le workflow **Publier sur GitHub Pages** depuis l’onglet Actions. Les URL Supabase de redirection doivent correspondre à l’adresse de cet hébergement.
+Publiez le contenu de `dist/` sur un hébergeur statique HTTPS, à la racine ou dans un sous-répertoire. Le manifeste et le service worker utilisent des chemins relatifs. Ce dépôt publie la racine de la branche `gh-pages`. À chaque mise à jour de `main`, le workflow **Publier sur GitHub Pages** teste l’application, compile `dist/`, actualise `gh-pages` et demande la publication. Il peut aussi être lancé depuis l’onglet Actions. Les URL Supabase de redirection doivent correspondre à l’adresse de cet hébergement.
 
 ## Organisation du code
 
