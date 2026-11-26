@@ -73,3 +73,29 @@ test('Le rayon choisi est borné et les activités sont placées sur les jours c
   const places=[{id:'a'},{id:'b'},{id:'c'}];
   assert.deepEqual(scheduleActivities(places,new Map([['a',2],['c',2]]),3),[[],[places[0],places[2]],[]]);
 });
+
+test('Les dates calculent le budget par nuit et sont transmises au comparateur', async () => {
+  const {stayDates,lodgingComparison}=await import('../discover.js');
+  const dates=stayDates('2027-03-27','2027-04-02');
+  assert.deepEqual([dates.days,dates.nights],[7,6]);
+  assert.equal(stayDates('2027-03-01','2027-03-30').days,30);
+  assert.throws(()=>stayDates('2027-03-01','2027-03-31'),/30 jours/);
+  assert.throws(()=>stayDates('2027-02-30','2027-03-02'));
+  const result=lodgingComparison('Lisbonne, Portugal',dates,3,500);
+  assert.equal(result.nightly,83.33);
+  assert.equal(new URL(result.url).searchParams.get('checkin'),'2027-03-27');
+  assert.equal(new URL(result.url).searchParams.get('group_adults'),'3');
+  assert.equal(lodgingComparison('Portugal',null,1,0),null);
+});
+
+test('La recherche pays récupère la capitale puis limite le géocodage au pays choisi', async t => {
+  const {findCountryCities}=await import('../discover.js');
+  t.mock.method(globalThis,'fetch',async url => {
+    const endpoint=new URL(url);
+    if(endpoint.hostname==='api.worldbank.org') return Response.json([{},[{capitalCity:'Lisbon'}]]);
+    assert.equal(endpoint.searchParams.get('countryCode'),'PT');
+    assert.equal(endpoint.searchParams.get('name'),'Lisbon');
+    return Response.json({results:[{id:20,name:'Lisbonne',country_code:'PT',feature_code:'PPLC',latitude:38.7,longitude:-9.1}]});
+  });
+  assert.equal((await findCountryCities('PT'))[0].city,'Lisbonne');
+});

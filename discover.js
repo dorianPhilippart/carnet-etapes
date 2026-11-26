@@ -1,11 +1,40 @@
 export const interests = {
   visite: 'Culture', nature: 'Plein air', repas: 'Gastronomie', quartier: 'Quartiers et balades',
 };
-export const durations = [1, 2, 3, 4];
+export const maxDuration = 30;
+export const durations = Array.from({length:maxDuration}, (_,i)=>i+1);
+const countryCodes = 'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ');
+const displayCountries = new Intl.DisplayNames(['fr'], {type:'region'});
+export const countries = countryCodes.map(code=>[code,displayCountries.of(code)])
+  .sort((a,b)=>a[1].localeCompare(b[1],'fr'));
+
+export function stayDates(start, end) {
+  const iso = value => {
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(value)) return NaN;
+    const date = new Date(value+'T00:00:00Z');
+    return Number.isFinite(+date) && date.toISOString().slice(0,10)===value ? +date : NaN;
+  };
+  if (!start && !end) return null;
+  const nights = (iso(end)-iso(start))/86400000;
+  if (!Number.isInteger(nights) || nights < 0 || nights >= maxDuration) {
+    throw new Error('Indiquez des dates dans l’ordre, pour un séjour de 1 à '+maxDuration+' jours.');
+  }
+  return {start, end, days:nights+1, nights};
+}
+
+export function lodgingComparison(target, dates, adults, budget) {
+  if (!dates?.nights || !target) return null;
+  const query = new URLSearchParams({ss:target, checkin:dates.start, checkout:dates.end,
+    group_adults:String(adults), no_rooms:'1', selected_currency:'EUR'});
+  return {url:'https://www.booking.com/searchresults.fr.html?'+query,
+    nightly:budget > 0 ? Math.floor(budget*100/dates.nights)/100 : null, nights:dates.nights};
+}
+
 export const radii = [2, 5, 10];
 const radiusKm = value => radii.includes(value) ? value : 5;
 const geocoding = 'https://geocoding-api.open-meteo.com/v1/search';
 const overpass = ['https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter'];
+const perTheme = 8;
 const tags = {
   visite: { tourism: /^(museum|gallery|artwork)$/, historic: /^(castle|monument|archaeological_site)$/ },
   nature: { leisure: /^(park|garden|nature_reserve)$/, natural: /^beach$/ },
@@ -22,15 +51,24 @@ async function json(url, options = {}) {
   return response.json();
 }
 
-export async function findCities(name, signal) {
+export async function findCities(name, signal, country) {
   const query = new URLSearchParams({name:name.trim(), language:'fr', count:'10', format:'json'});
+  if(countryCodes.includes(country)) query.set('countryCode',country);
   const data = await json(geocoding+'?'+query, {signal});
   return (data.results || []).filter(row => /^PPL/.test(row.feature_code || '') &&
-    Number.isSafeInteger(row.id) && Number.isFinite(row.latitude) && Number.isFinite(row.longitude))
+    (!country || row.country_code === country) && Number.isSafeInteger(row.id) && Number.isFinite(row.latitude) && Number.isFinite(row.longitude))
     .slice(0, 6).map(row => ({
       id:String(row.id), city:row.name, region:row.admin1, country:row.country,
       latitude:row.latitude, longitude:row.longitude
     }));
+}
+
+export async function findCountryCities(country, signal) {
+  if (!countryCodes.includes(country)) throw new Error('Choisissez un pays.');
+  const data = await json('https://api.worldbank.org/v2/country/'+country+'?format=json', {signal});
+  const capital = Array.isArray(data) ? data[1]?.[0]?.capitalCity : '';
+  if (!capital) return [];
+  return findCities(capital,signal,country);
 }
 
 function themesFor(themes) {
@@ -86,12 +124,12 @@ export function makeSuggestion(city, elements, {themes = [], days = 2}) {
       const place = [title, street, city.city, city.country].filter(Boolean).join(', ').slice(0,200);
       result.push({id:row.type+'-'+row.id, title, place, theme, ...locationDetails(city,row.lat ?? row.center?.lat,row.lon ?? row.center?.lon), category:theme==='repas'?'repas':'visite',
         source:'https://www.openstreetmap.org/'+row.type+'/'+row.id});
-      if (result.length === 4) break;
+      if (result.length === perTheme) break;
     }
     return result;
   });
   const matches = byTheme.flatMap(group => group);
-  const ordered = [0,1,2,3].flatMap(i => byTheme.flatMap(group => group[i] ? [group[i]] : []));
+  const ordered = Array.from({length:perTheme},(_,i)=>i).flatMap(i => byTheme.flatMap(group => group[i] ? [group[i]] : []));
   return {...city, duration, matches, plan:ordered.slice(0,duration)};
 }
 
@@ -106,7 +144,7 @@ async function encyclopediaSuggestion(city, preferences, signal) {
   const duration = durations.includes(preferences.days) ? preferences.days : 2;
   const groups = await Promise.allSettled(themesFor(preferences.themes).map(async theme => {
     const search = new URLSearchParams({action:'query', list:'search', format:'json', origin:'*',
-      srnamespace:'0', srlimit:'4', srprop:'',
+      srnamespace:'0', srlimit:String(perTheme), srprop:'',
       srsearch:'nearcoord:'+radiusKm(preferences.radius)+'km,'+city.latitude+','+city.longitude+' ('+wikiTerms[theme]+')'});
     const data = await json('https://fr.wikipedia.org/w/api.php?'+search, {signal, timeoutMs:7500});
     if (!Array.isArray(data.query?.search)) throw new Error('Réponse Wikipédia indisponible.');
@@ -120,7 +158,7 @@ async function encyclopediaSuggestion(city, preferences, signal) {
   if (groups.every(group=>group.status==='rejected')) throw new Error('La recherche de lieux est momentanément indisponible. Réessayez dans un instant.');
   const seen = new Set();
   const lists = groups.map(group=>group.status==='fulfilled' ? group.value : []);
-  const matches = [0,1,2,3].flatMap(index=>lists.flatMap(list=>list[index]?[list[index]]:[]))
+  const matches = Array.from({length:perTheme},(_,i)=>i).flatMap(index=>lists.flatMap(list=>list[index]?[list[index]]:[]))
     .filter(place=>!seen.has(place.id) && seen.add(place.id));
   if(matches.length) {
     const query = new URLSearchParams({action:'query', prop:'coordinates', format:'json', origin:'*',

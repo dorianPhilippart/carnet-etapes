@@ -1,4 +1,4 @@
-import {durations, radii, interests, findCities, fetchSuggestion, scheduleActivities} from './discover.js';
+import {durations, radii, interests, countries, stayDates, lodgingComparison, findCities, findCountryCities, fetchSuggestion, scheduleActivities} from './discover.js';
 import {findStops} from './search.js';
 import {stopMapLink, nextLeg} from './route.js';
 import {getTrips, saveTrip, deleteTrip, subscribe, syncInfo} from './store.js';
@@ -24,8 +24,9 @@ const plural = (n,singular,other = singular+'s') => n+' '+(n===1 ? singular : ot
 const ordered = stops => [...stops].sort((a,b)=>a.date.localeCompare(b.date) || (a.time || '99:99').localeCompare(b.time || '99:99'));
 let selectedId;
 try { sessionStorage.removeItem('escale.activeTrip'); } catch {}
-let preferences = {destination:'', themes:[], days:2, radius:5};
+let preferences = {destination:'', country:'', start:'', end:'', adults:2, budget:0, themes:[], days:2, radius:5};
 const dayAssignments = new Map();
+const destinationKey = values => values.country+':'+values.destination;
 let citiesFor = '';
 let cities = [], suggestion, discoveryError = '', discoveryRequest;
 let date, dateTrip, allDays = false, noticeTimeout, modalState;
@@ -145,12 +146,28 @@ function discoveryPlan(idea) {
     ${activities.length ? `<ul>${activities.map(activity=>`<li>${text(activity.title)}</li>`).join('')}</ul>` : '<p>Libre</p>'}</li>`).join('')}</ol>`;
 }
 
+function discoveryLodging() {
+  if (!preferences.start || !preferences.end) return '';
+  let dates;
+  try { dates=stayDates(preferences.start,preferences.end); } catch { return ''; }
+  const country = countries.find(([code])=>code===preferences.country)?.[1];
+  const selected = destinationKey(preferences) === citiesFor ? suggestion : null;
+  const target = [selected?.city || preferences.destination,selected?.country || country].filter(Boolean).join(', ');
+  const comparison = lodgingComparison(target,dates,preferences.adults,preferences.budget);
+  if (!comparison || preferences.start < localToday()) return '';
+  const nightly = comparison.nightly === null ? '' : ` · plafond moyen de ${comparison.nightly.toLocaleString('fr-FR',{style:'currency',currency:'EUR'})} par nuit`;
+  return `<section class="discovery-card discovery-lodging"><h2>Budget hébergement</h2>
+    <p>${text(target)} · ${plural(comparison.nights,'nuit')} · ${plural(preferences.adults,'adulte')}${nightly}</p>
+    <p>Le plafond est calculé à partir de ton budget. Consulte les prix disponibles pour ces dates chez le comparateur.</p>
+    <a class="btn secondary" href="${text(comparison.url)}" target="_blank" rel="noopener noreferrer">Comparer les hébergements sur Booking.com</a></section>`;
+}
+
 function discovery(trip, signedIn) {
-  const {destination, themes, days, radius} = preferences;
+  const {destination, country, start, end, adults, budget, themes, days, radius} = preferences;
   const showAdd = signedIn && trip;
   const idea = suggestion;
   const results = idea?.matches.length ? `<article class="discovery-card">
-    <p class="discovery-country">${text(idea.country)} · ${plural(idea.duration,'jour')}</p><h2>${text(idea.city)}</h2>
+    <p class="discovery-country">${text(idea.country)} · ${plural(idea.duration,'jour')}${idea.dates ? ' · '+text(dateRange({startDate:idea.dates.start,endDate:idea.dates.end})) : ''}</p><h2>${text(idea.city)}</h2>
     ${idea.via ? `<p>Suggestions repérées dans ${text(idea.via)}.</p>` : ''}
     <section class="discovery-preview"><h3>Mon programme</h3><p>Choisis le jour de chaque activité dans les résultats.</p>
     <div id="discovery-days" aria-live="polite">${discoveryPlan(idea)}</div>
@@ -166,14 +183,22 @@ function discovery(trip, signedIn) {
     </article>` : '';
   return `<div class="page-heading"><h1>Découvrir</h1></div>
     <form id="discover-form" class="discovery-filters">
-      <div class="search-fields"><label>Ville<input name="destination" type="search" minlength="2" maxlength="100" required autocomplete="off" placeholder="Ex. Kyoto" value="${text(destination)}"></label>
-      <label>Durée<select name="days">${durations.map(day=>`<option value="${day}" ${day===days?'selected':''}>${plural(day,'jour')}</option>`).join('')}</select></label>
-      <label>Rayon autour de la ville<select name="radius">${radii.map(value=>`<option value="${value}" ${value===radius?'selected':''}>${value} km</option>`).join('')}</select></label></div>
+      <div class="search-fields discovery-trip-fields">
+      <label>Pays<select name="country"><option value="">Tous les pays</option>${countries.map(([code,label])=>`<option value="${code}" ${code===country?'selected':''}>${text(label)}</option>`).join('')}</select></label>
+      <label>Ville<input name="destination" type="search" maxlength="100" autocomplete="off" placeholder="Facultatif si un pays est choisi" value="${text(destination)}"></label>
+      <label>Départ<input type="date" name="start" value="${text(start)}"></label>
+      <label>Retour<input type="date" name="end" value="${text(end)}"></label>
+      <label>Durée sans dates<select name="days">${durations.map(day=>`<option value="${day}" ${day===days?'selected':''}>${plural(day,'jour')}</option>`).join('')}</select></label>
+      <label>Rayon autour de la ville<select name="radius">${radii.map(value=>`<option value="${value}" ${value===radius?'selected':''}>${value} km</option>`).join('')}</select></label>
+      <label>Adultes<input type="number" name="adults" min="1" max="16" required value="${adults}"></label>
+      <label>Budget total hébergement (€)<input type="number" name="budget" min="0" max="100000" step=".01" value="${budget || ''}" placeholder="Facultatif"></label>
+      </div><p>Avec un pays seul, la capitale sert de point de départ. Les dates déterminent la durée du séjour.</p>
       <fieldset><legend>Vos envies</legend><div class="discovery-themes">${Object.entries(interests).map(([key,label])=>`<label><input type="checkbox" name="theme" value="${key}" ${themes.includes(key)?'checked':''}>${label}</label>`).join('')}</div></fieldset>
-      <button type="submit" class="btn primary">Chercher la ville</button>
+      <button type="submit" class="btn primary">Chercher la destination</button>
     </form>
     ${cities.length ? `<form id="discover-city" class="discovery-filters discovery-results"><label>Ville trouvée<select name="city">${cities.map(city=>`<option value="${text(city.id)}" ${city.id===idea?.id?'selected':''}>${text([...new Set([city.city,city.region,city.country].filter(Boolean))].join(', '))}</option>`).join('')}</select></label>
     <button type="submit" class="btn primary">Rechercher des activités</button></form>` : ''}
+    <div id="lodging-results">${discoveryLodging()}</div>
     <section class="discovery-results" aria-label="Suggestions">
       <p id="discovery-status" role="status" tabindex="-1">${discoveryRequest?'Recherche en ligne…':text(discoveryError || (idea && !idea.matches.length ? 'Aucun lieu trouvé pour ces envies. Essayez d’autres catégories.' : ''))}</p>
       ${results && showAdd?`<p>Tu peux ajouter les activités à « ${text(trip.title)} ».</p>`:''}
@@ -184,10 +209,15 @@ function discovery(trip, signedIn) {
 
 function discoveryChoices(form) {
   const values = new FormData(form);
-  return {destination:values.get('destination').trim(), themes:values.getAll('theme'), days:Number(values.get('days')), radius:Number(values.get('radius'))};
+  return {destination:values.get('destination').trim(), country:values.get('country'), start:values.get('start'), end:values.get('end'),
+    adults:Number(values.get('adults')), budget:Number(values.get('budget')), themes:values.getAll('theme'),
+    days:Number(values.get('days')), radius:Number(values.get('radius'))};
 }
 main.addEventListener('change', event => {
-  if (event.target.form?.id === 'discover-form') preferences = discoveryChoices(event.target.form);
+  if (event.target.form?.id === 'discover-form') {
+    preferences = discoveryChoices(event.target.form);
+    main.querySelector('#lodging-results').innerHTML = discoveryLodging();
+  }
   if (!suggestion || !event.target.dataset.planDay) return;
   dayAssignments.set(event.target.dataset.planDay,Number(event.target.value));
   main.querySelector('#discovery-days').innerHTML = discoveryPlan(suggestion);
@@ -203,9 +233,16 @@ main.addEventListener('submit', async event => {
   const values = discoveryChoices(main.querySelector('#discover-form'));
   const findCity = event.target.id === 'discover-form';
   const city = findCity ? null : cities.find(item=>item.id===new FormData(event.target).get('city'));
-  if (values.destination.length < 2 || (!findCity && !city)) return;
-  if (!findCity && values.destination !== citiesFor) {
-    discoveryError = 'Le nom de ville a changé. Lancez d’abord Chercher la ville.';
+  if (!findCity && !city) return;
+  let dates;
+  try {
+    if (values.destination && values.destination.length < 2) throw new Error('Indiquez au moins deux caractères pour la ville.');
+    if (!values.destination && !values.country) throw new Error('Choisissez un pays ou saisissez une ville.');
+    dates = stayDates(values.start,values.end);
+    if (dates) values.days = dates.days;
+    if (!findCity && destinationKey(values)!==citiesFor) throw new Error('La destination a changé. Relancez sa recherche.');
+  } catch (error) {
+    discoveryError = error.message;
     render();
     return;
   }
@@ -220,15 +257,16 @@ main.addEventListener('submit', async event => {
   render();
   try {
     if(findCity) {
-      const found = await findCities(values.destination, request.signal);
+      const found = values.destination ? await findCities(values.destination,request.signal,values.country) :
+        await findCountryCities(values.country,request.signal);
       if (discoveryRequest !== request) return;
       cities = found;
-      citiesFor = values.destination;
-      if (!cities.length) discoveryError = 'Aucune ville trouvée. Vérifiez le nom saisi.';
+      citiesFor = destinationKey(values);
+      if (!cities.length) discoveryError = 'Aucune ville trouvée. Essayez de saisir le nom d’une ville.';
     } else {
       const result = await fetchSuggestion(city, values, request.signal);
       if (discoveryRequest === request) {
-        suggestion = result;
+        suggestion = {...result,dates};
         result.plan.forEach((activity,index)=>dayAssignments.set(activity.id,index+1));
       }
     }
@@ -296,7 +334,7 @@ function tripForm(trip, idea) {
   showDialog(trip?'Modifier le voyage':'Nouveau voyage',`<form id="trip-form">
   ${field('Nom du voyage','title','text',trip?.title || (idea ? 'Séjour à '+idea.city : ''), 'required maxlength="120" placeholder="Ex. Un été en Italie"')}
   ${field('Destination','destination','text',trip?.destination || (idea ? idea.city+', '+idea.country : ''), 'required maxlength="160" placeholder="Ville, région ou pays"')}
-  <div class="form-pair">${field('Départ','startDate','date',trip?.startDate||today,'required')}${field('Retour','endDate','date',trip?.endDate||(idea ? shiftDay(today,idea.duration-1) : today),'required')}</div>
+  <div class="form-pair">${field('Départ','startDate','date',trip?.startDate||idea?.dates?.start||today,'required')}${field('Retour','endDate','date',trip?.endDate||idea?.dates?.end||(idea ? shiftDay(today,idea.duration-1) : today),'required')}</div>
   ${area('Note de voyage','notes',trip?.notes || '')}${actions(trip?'Enregistrer':'Créer le voyage')}</form>`,{type:'trip',trip,idea});
 }
 function stopForm(trip,stop,preset) {
