@@ -21,6 +21,8 @@ Dans **Découvrir**, cherchez un pays ou une ville, choisissez le résultat voul
 
 Lorsqu’une journée contient au moins deux étapes géolocalisées, le calcul des déplacements propose les trajets à pied, à vélo ou en voiture. Sur demande, seules les coordonnées des étapes sont envoyées au service de calcul FOSSGIS. La consommation et le prix du carburant permettent une estimation locale, hors péages et stationnement.
 
+Pour comparer un aller-retour, saisissez les codes IATA dans **Comparer les vols**. Les liens préremplissent KAYAK et Skyscanner pour vos dates et le nombre d’adultes. La souplesse de 1 ou 3 jours décale simultanément l’aller et le retour. Les prix et disponibilités restent consultables chez chaque comparateur.
+
 ## Démarrer en local
 
 Avec Node.js 22 ou plus récent et Python 3 pour le serveur d’exemple, depuis la racine du dépôt :
