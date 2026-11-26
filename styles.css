@@ -209,3 +209,13 @@ h1,h2,h3{font-family:var(--serif);font-weight:500}
 .discovery-filters>p,.discovery-lodging>p{color:var(--muted)}
 .discovery-lodging{margin-top:14px}
 @media(max-width:425px){.discovery-trip-fields{grid-template-columns:minmax(0,1fr)}}
+
+.transport-panel{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--white)}
+.transport-panel summary{font-weight:650;cursor:pointer}
+.transport-panel form{display:grid;gap:10px;padding-top:10px}
+.transport-panel select,.transport-panel input{display:block;width:100%;min-width:0;margin-top:3px;padding:7px;border:1px solid var(--line);border-radius:5px;background:var(--paper);color:var(--ink)}
+.transport-fuel:not([hidden]){display:grid;gap:8px}
+.transport-panel p{font-size:.88rem;color:var(--muted)}
+.transport-panel .transport-result{font-weight:650;color:var(--ink)}
+.transport-result:empty{display:none}
+.discovery-days>li:has(.transport-panel){grid-column:1/-1}
