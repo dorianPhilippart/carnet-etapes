@@ -190,3 +190,6 @@ h1,h2,h3{font-family:var(--serif);font-weight:500}
 .discovery-activities li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
 .discovery-activities small{display:block;margin-top:2px}
 @media(max-width:760px){.rail nav{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.discovery-filters input[type=search]{display:block;width:100%;padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);margin-top:5px}
+.discovery-results #discovery-status:empty{display:none}
+.discovery-results>p:last-child{font-size:.88rem;margin-top:16px}
