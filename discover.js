@@ -3,7 +3,7 @@ export const interests = {
 };
 export const durations = [1, 2, 3, 4];
 const geocoding = 'https://geocoding-api.open-meteo.com/v1/search';
-const overpass = 'https://overpass-api.de/api/interpreter';
+const overpass = ['https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter'];
 const tags = {
   visite: { tourism: /^(museum|gallery|artwork)$/, historic: /^(castle|monument|archaeological_site)$/ },
   nature: { leisure: /^(park|garden|nature_reserve)$/, natural: /^beach$/ },
@@ -12,8 +12,8 @@ const tags = {
 };
 
 async function json(url, options = {}) {
-  const {signal, ...init} = options;
-  const timeout = AbortSignal.timeout(22000);
+  const {signal, timeoutMs = 22000, ...init} = options;
+  const timeout = AbortSignal.timeout(timeoutMs);
   const response = await fetch(url, { ...init, credentials:'omit', cache:'no-store', referrerPolicy:'no-referrer',
     signal:signal ? AbortSignal.any([signal, timeout]) : timeout });
   if (!response.ok) throw new Error('Le service de recherche est momentanément indisponible. Réessayez dans un instant.');
@@ -82,7 +82,16 @@ export function makeSuggestion(city, elements, {themes = [], days = 2}) {
 }
 
 export async function fetchSuggestion(city, preferences, signal) {
-  const data = await json(overpass, {method:'POST', body:new URLSearchParams({data:activityQuery(city,preferences.themes)}), signal});
-  if (!Array.isArray(data.elements) || data.remark) throw new Error('La recherche de lieux a été interrompue. Réessayez dans un instant.');
-  return makeSuggestion(city,data.elements,preferences);
+  const query = new URLSearchParams({data:activityQuery(city,preferences.themes)});
+  for (const endpoint of overpass) {
+    try {
+      const data = await json(endpoint+'?'+query, {signal, timeoutMs:12000});
+      if (Array.isArray(data.elements) && !data.remark) {
+        return makeSuggestion(city,data.elements,preferences);
+      }
+    } catch(error) {
+      if (signal?.aborted) throw error;
+    }
+  }
+  throw new Error('La recherche de lieux est momentanément indisponible. Réessayez dans un instant.');
 }
