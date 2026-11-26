@@ -1,3 +1,4 @@
+import {flightSearch} from './flights.js';
 import {travelModes, validPoint, fetchTransport, fuelCost} from './transport.js';
 import {durations, radii, interests, countries, stayDates, lodgingComparison, findCities, findCountryCities, fetchSuggestion, scheduleActivities} from './discover.js';
 import {findStops} from './search.js';
@@ -211,6 +212,56 @@ function discoveryLodging() {
     <a class="btn secondary" href="${text(comparison.url)}" target="_blank" rel="noopener noreferrer">Comparer les hébergements sur Booking.com</a></section>`;
 }
 
+let flightPreferences = {departure:'',arrival:'',flexible:0};
+let flightResults = [];
+let flightError = '';
+
+function flightComparisons() {
+  return `<p role="status">${text(flightError || (flightResults.length ? plural(flightResults.length,'aller-retour à comparer','allers-retours à comparer') : ''))}</p>
+    ${flightResults.length ? `<ul class="flight-options">${flightResults.map(option=>`<li>
+      <strong>${text(dateRange({startDate:option.outbound,endDate:option.inbound}))}</strong>
+      <span>${option.delta===0?'Dates choisies':plural(Math.abs(option.delta),'jour')+(option.delta<0?' plus tôt':' plus tard')}</span>
+      <div><a class="btn secondary" href="${text(option.kayak)}" target="_blank" rel="noopener noreferrer">Voir les prix sur KAYAK</a>
+      <a class="btn secondary" href="${text(option.skyscanner)}" target="_blank" rel="noopener noreferrer">Voir les prix sur Skyscanner</a></div>
+    </li>`).join('')}</ul>` : ''}`;
+}
+
+function discoveryFlights() {
+  return `<section class="discovery-card discovery-lodging" aria-labelledby="flight-title">
+    <h2 id="flight-title">Comparer les vols</h2>
+    <p>Les dates de départ et de retour et le nombre d’adultes viennent des champs ci-dessus. Les comparateurs affichent les tarifs par compagnie et par date.</p>
+    <form id="flight-form" class="discovery-filters">
+      <div class="search-fields discovery-trip-fields">
+      <label>Aéroport de départ (code IATA)<input name="departure" type="text" pattern="[A-Za-z]{3}" maxlength="3" required placeholder="CDG" value="${text(flightPreferences.departure)}"></label>
+      <label>Aéroport d’arrivée (code IATA)<input name="arrival" type="text" pattern="[A-Za-z]{3}" maxlength="3" required placeholder="LIS" value="${text(flightPreferences.arrival)}"></label>
+      <label>Dates flexibles<select name="flexible">${[[0,'Dates exactes'],[1,'Un jour avant et après'],[3,'Trois jours avant et après']].map(([value,label])=>`<option value="${value}" ${flightPreferences.flexible===value?'selected':''}>${label}</option>`).join('')}</select></label></div>
+      <button type="submit" class="btn primary">Préparer la comparaison</button>
+    </form>
+    <div id="flight-results">${flightComparisons()}</div>
+  </section>`;
+}
+
+main.addEventListener('input', event=>{
+  if(event.target.form?.id!=='flight-form') return;
+  const fields = new FormData(event.target.form);
+  flightPreferences = {departure:fields.get('departure'),arrival:fields.get('arrival'),flexible:Number(fields.get('flexible'))};
+  flightResults = [];
+  flightError = '';
+  main.querySelector('#flight-results').innerHTML = flightComparisons();
+});
+main.addEventListener('submit', event=>{
+  if(event.target.id!=='flight-form') return;
+  event.preventDefault();
+  const dates = discoveryChoices(main.querySelector('#discover-form'));
+  const fields = new FormData(event.target);
+  flightPreferences = {departure:fields.get('departure'),arrival:fields.get('arrival'),flexible:Number(fields.get('flexible'))};
+  flightResults = [];
+  flightError = '';
+  try { flightResults = flightSearch({...dates,...flightPreferences},localToday()); }
+  catch(error) { flightError=error.message; }
+  main.querySelector('#flight-results').innerHTML = flightComparisons();
+});
+
 function discovery(trip, signedIn) {
   const {destination, country, start, end, adults, budget, themes, days, radius} = preferences;
   const showAdd = signedIn && trip;
@@ -248,6 +299,7 @@ function discovery(trip, signedIn) {
     ${cities.length ? `<form id="discover-city" class="discovery-filters discovery-results"><label>Ville trouvée<select name="city">${cities.map(city=>`<option value="${text(city.id)}" ${city.id===idea?.id?'selected':''}>${text([...new Set([city.city,city.region,city.country].filter(Boolean))].join(', '))}</option>`).join('')}</select></label>
     <button type="submit" class="btn primary">Rechercher des activités</button></form>` : ''}
     <div id="lodging-results">${discoveryLodging()}</div>
+    ${discoveryFlights()}
     <section class="discovery-results" aria-label="Suggestions">
       <p id="discovery-status" role="status" tabindex="-1">${discoveryRequest?'Recherche en ligne…':text(discoveryError || (idea && !idea.matches.length ? 'Aucun lieu trouvé pour ces envies. Essayez d’autres catégories.' : ''))}</p>
       ${results && showAdd?`<p>Tu peux ajouter les activités à « ${text(trip.title)} ».</p>`:''}
@@ -266,6 +318,10 @@ main.addEventListener('change', event => {
   if (event.target.form?.id === 'discover-form') {
     preferences = discoveryChoices(event.target.form);
     main.querySelector('#lodging-results').innerHTML = discoveryLodging();
+    if(['start','end','adults'].includes(event.target.name)) {
+      flightResults = []; flightError = '';
+      main.querySelector('#flight-results').innerHTML = flightComparisons();
+    }
   }
   if (!suggestion || !event.target.dataset.planDay) return;
   dayAssignments.set(event.target.dataset.planDay,Number(event.target.value));
