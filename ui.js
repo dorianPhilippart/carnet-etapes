@@ -1,3 +1,4 @@
+import {travelModes, validPoint, fetchTransport, fuelCost} from './transport.js';
 import {durations, radii, interests, countries, stayDates, lodgingComparison, findCities, findCountryCities, fetchSuggestion, scheduleActivities} from './discover.js';
 import {findStops} from './search.js';
 import {stopMapLink, nextLeg} from './route.js';
@@ -80,10 +81,58 @@ function stopRow(stop) {
   <span class="stop-symbol ${cat}">${icon(cat,21)}</span><span class="stop-copy"><strong>${text(stop.title)}</strong>${stop.place?`<span class="stop-place">${icon('pin',13)}${text(stop.place)}</span>`:''}</span>
   <span class="category ${cat}">${categories[cat]}</span>${icon('right',15)}</button></li>`;
 }
+function transportForm(activities, day, discoveryMode = false) {
+  if (activities.length < 2 || activities.length > 50 || !activities.every(activity=>validPoint(activity.coordinates))) return '';
+  return `<details class="transport-panel"><summary>Calculer les déplacements</summary>
+    <form data-transport-day="${text(day)}" data-discovery="${discoveryMode}">
+      <label>Mode de déplacement<select name="mode">${Object.entries(travelModes).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')}</select></label>
+      <div class="transport-fuel" hidden>
+        <label>Consommation (L/100 km)<input name="consumption" type="number" min=".1" max="100" step=".1"></label>
+        <label>Prix du carburant (€/L)<input name="price" type="number" min=".01" max="100" step=".01"></label>
+      </div>
+      <p>Le calcul envoie les coordonnées des étapes à <a href="https://routing.openstreetmap.de/about.html" target="_blank" rel="noopener noreferrer">FOSSGIS</a>. Distance et durée estimées, hors trafic en direct.</p>
+      <button class="btn secondary" type="submit">Calculer le trajet</button>
+      <p role="status" class="transport-result"></p>
+      <p class="transport-attribution">Données © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">contributeurs OpenStreetMap</a> · <a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener noreferrer">Corriger la carte</a></p>
+    </form>
+  </details>`;
+}
+
+main.addEventListener('change', event=>{
+  if(event.target.name==='mode' && event.target.form?.dataset.transportDay) {
+    event.target.form.querySelector('.transport-fuel').hidden=event.target.value!=='car';
+    event.target.form.querySelector('.transport-result').textContent='';
+  }
+});
+
+main.addEventListener('submit', async event=>{
+  const form=event.target;
+  if(!form.dataset.transportDay) return;
+  event.preventDefault();
+  const {transportDay,discovery}=form.dataset;
+  const stops=discovery==='true' ? scheduleActivities(suggestion.matches,dayAssignments,suggestion.duration)[Number(transportDay)-1] :
+    ordered(activeTrip()?.stops || []).filter(stop=>stop.date===transportDay);
+  const values=new FormData(form), mode=values.get('mode');
+  const output=form.querySelector('.transport-result'), button=form.querySelector('[type="submit"]');
+  button.disabled=true;
+  const select=form.elements.mode;
+  select.disabled=true;
+  output.textContent='Calcul en cours…';
+  try {
+    const {meters,seconds}=await fetchTransport(stops,mode);
+    const minutes=Math.round(seconds/60);
+    const time=minutes>=60 ? Math.floor(minutes/60)+' h '+String(minutes%60).padStart(2,'0') : minutes+' min';
+    const fuel=mode==='car' ? fuelCost(meters,Number(values.get('consumption')),Number(values.get('price'))) : null;
+    output.textContent=(meters/1000).toLocaleString('fr-FR',{maximumFractionDigits:1})+' km · '+time+
+      (fuel===null ? '' : ' · carburant estimé à '+fuel.toLocaleString('fr-FR',{style:'currency',currency:'EUR'})+' (hors péages et stationnement)');
+  } catch(error) { output.textContent=error.message; }
+  finally { button.disabled=false; select.disabled=false; }
+});
+
 function daily(trip,day,stops) {
   const number=dayDistance(trip.startDate,day)+1;
   return `<section class="daily"><div class="day-heading"><h3>${capitalize(fmt(day,{weekday:'long',day:'numeric',month:'long'}))}</h3><span>Jour ${number}</span></div>
-  ${stops.length ? `<ol class="timeline">${stops.map(stopRow).join('')}</ol>` : `<div class="day-empty">${icon('route',24)}<p>Aucune étape prévue pour cette journée.</p>${button('add-stop','Ajouter une étape','plus')}</div>`}</section>`;
+  ${stops.length ? `<ol class="timeline">${stops.map(stopRow).join('')}</ol>` : `<div class="day-empty">${icon('route',24)}<p>Aucune étape prévue pour cette journée.</p>${button('add-stop','Ajouter une étape','plus')}</div>`}${transportForm(stops,day)}</section>`;
 }
 function refreshSearch(trip) {
   const matches = findStops(trip.stops, editor.querySelector('#stop-query').value, editor.querySelector('#stop-category').value);
@@ -143,7 +192,7 @@ function notesPage(trip) {
 function discoveryPlan(idea) {
   const days = scheduleActivities(idea.matches,dayAssignments,idea.duration);
   return `<ol class="discovery-days">${days.map((activities,index)=>`<li><strong>Jour ${index+1}</strong>
-    ${activities.length ? `<ul>${activities.map(activity=>`<li>${text(activity.title)}</li>`).join('')}</ul>` : '<p>Libre</p>'}</li>`).join('')}</ol>`;
+    ${activities.length ? `<ul>${activities.map(activity=>`<li>${text(activity.title)}</li>`).join('')}</ul>` : '<p>Libre</p>'}${transportForm(activities,index+1,true)}</li>`).join('')}</ol>`;
 }
 
 function discoveryLodging() {
@@ -343,7 +392,7 @@ function stopForm(trip,stop,preset) {
     ${field('Nom de l’étape','title','text',stop?.title||preset?.title||'', 'required maxlength="120" placeholder="Ex. Visite du temple"')}
     ${field('Lieu ou adresse','place','text',stop?.place||preset?.place||'', 'maxlength="200" placeholder="Ex. Asakusa, Tokyo"')}
     <div class="form-pair">${field('Date','date','date',stop?.date||date,`required min="${text(trip.startDate)}" max="${text(trip.endDate)}"`)}${field('Heure (facultatif)','time','time',stop?.time||'')}</div>
-    <label>Catégorie<select name="category">${catOptions}</select></label>${area('Notes','notes',stop?.notes || '')}${actions(stop?'Enregistrer':'Ajouter l’étape')}</form>`,{type:'stop',trip,stop});
+    <label>Catégorie<select name="category">${catOptions}</select></label>${area('Notes','notes',stop?.notes || '')}${actions(stop?'Enregistrer':'Ajouter l’étape')}</form>`,{type:'stop',trip,stop,preset});
 }
 function stopDetail(trip,stop) {
   const cat=Object.hasOwn(categories,stop.category)?stop.category:'autre';
@@ -381,7 +430,7 @@ editor.addEventListener('submit', async event=>{
   const submit=form.querySelector('[type="submit"]');
   if(submit.disabled) return;
   const data=Object.fromEntries([...new FormData(form)].map(([k,v])=>[k,String(v).trim()]));
-  const {type,trip,stop,idea}=modalState;
+  const {type,trip,stop,idea,preset}=modalState;
   submit.disabled=true;
   try {
     let result;
@@ -392,7 +441,8 @@ editor.addEventListener('submit', async event=>{
       if(idea && dayDistance(data.startDate,data.endDate)+1 < idea.duration) throw Error('Prévoyez '+plural(idea.duration,'jour')+' pour ce programme.');
       const planned=idea?.schedule.flatMap((activities,index)=>activities.map(activity=>({
         id:crypto.randomUUID(), title:activity.title, place:activity.place, category:activity.category,
-        date:shiftDay(data.startDate,index), time:'', notes:''
+        date:shiftDay(data.startDate,index), time:'', notes:'',
+        ...(validPoint(activity.coordinates)?{coordinates:activity.coordinates}:{})
       })));
       const updated={...trip,...data,id:trip?.id || crypto.randomUUID(),stops:trip?.stops || planned || []};
       remember(await saveTrip(updated,trip));
@@ -401,6 +451,8 @@ editor.addEventListener('submit', async event=>{
     } else if(type==='stop') {
       if(!data.title) throw Error('Indiquez le nom de l’étape.');
       const updated={...stop,...data,id:stop?.id || crypto.randomUUID()};
+      if(preset && data.place===preset.place && validPoint(preset.coordinates)) updated.coordinates=preset.coordinates;
+      if(stop && stop.place!==data.place) delete updated.coordinates;
       const stops=stop?trip.stops.map(s=>s.id===stop.id?updated:s):[...trip.stops,updated];
       remember(await saveTrip({...trip,stops},trip));
       dateTrip=selectedId;

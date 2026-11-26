@@ -99,7 +99,7 @@ export function distanceKm(city, lat, lon) {
 
 function locationDetails(city, lat, lon) {
   const distance = distanceKm(city,lat,lon);
-  return distance===null ? {} : {distance, map:'https://www.openstreetmap.org/?mlat='+lat+'&mlon='+lon+'#map=16/'+lat+'/'+lon};
+  return distance===null ? {} : {distance, coordinates:{lat,lon}, map:'https://www.openstreetmap.org/?mlat='+lat+'&mlon='+lon+'#map=16/'+lat+'/'+lon};
 }
 
 export function scheduleActivities(activities, assignments, duration) {

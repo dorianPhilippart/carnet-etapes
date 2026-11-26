@@ -19,6 +19,8 @@ Dans **Au programme**, recherchez une étape dans tout le voyage. Depuis sa fich
 
 Dans **Découvrir**, cherchez un pays ou une ville, choisissez le résultat voulu, puis lancez la recherche d’activités avec une durée de 1 à 30 jours, ou des dates de départ et de retour et vos envies. Le texte de la ville est envoyé à Open-Meteo (données GeoNames). Les coordonnées de la ville et les catégories sont envoyées à l’API Overpass d’OpenStreetMap. Si Overpass est indisponible, l’application cherche les lieux dans Wikipédia. Ajustez le rayon à 2, 5 ou 10 km. Les lieux géolocalisés indiquent leur distance à vol d’oiseau du centre et proposent un lien vers la carte. Affectez chaque activité à une journée ou laissez-la hors programme avant de créer le séjour. Pour une recherche par pays sans ville, la Banque mondiale fournit la capitale comme point de départ. Les résultats dépendent de la couverture des sources et les horaires ne sont pas vérifiés. Le budget d’hébergement indique un plafond moyen par nuit. Le lien vers Booking.com reprend la destination, les dates et le nombre d’adultes pour vérifier les offres en dehors du carnet.
 
+Lorsqu’une journée contient au moins deux étapes géolocalisées, le calcul des déplacements propose les trajets à pied, à vélo ou en voiture. Sur demande, seules les coordonnées des étapes sont envoyées au service de calcul FOSSGIS. La consommation et le prix du carburant permettent une estimation locale, hors péages et stationnement.
+
 ## Démarrer en local
 
 Avec Node.js 22 ou plus récent et Python 3 pour le serveur d’exemple, depuis la racine du dépôt :
