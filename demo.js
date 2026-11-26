@@ -1,6 +1,6 @@
-// A fictional, editable itinerary. Dates and times use the destination's local time.
+// A fictional demonstration itinerary. Dates and times use the destination's local time.
 const stages = [
-  [10, '09:00', 'Le temple Sensō-ji', 'Asakusa, Tokyo', 'visite', 'Entrer par la porte Kaminarimon et prendre le temps de parcourir la rue Nakamise.'],
+  [10, '09:00', 'Le temple Sensō-ji', 'Sensō-ji, Asakusa, Tokyo', 'visite', 'Entrer par la porte Kaminarimon et prendre le temps de parcourir la rue Nakamise.'],
   [10, '12:30', 'Déjeuner à Asakusa', 'Asakusa, Tokyo', 'repas', 'Une pause autour d’un bol de soba.'],
   [10, '15:00', 'Promenade au parc d’Ueno', 'Ueno, Tokyo', 'visite', 'Longer l’étang de Shinobazu avant de rentrer.'],
   [11, '10:00', 'Les jardins de Meiji-jingū', 'Harajuku, Tokyo', 'visite', 'Suivre les allées boisées depuis la gare de Harajuku.'],

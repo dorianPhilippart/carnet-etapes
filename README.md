@@ -15,6 +15,8 @@ Carnet d’étapes est un carnet de voyage en français pour préparer un séjou
 - Sur téléphone, vous pouvez ajouter l’application à l’écran d’accueil pour y accéder rapidement.
 
 
+Dans **Au programme**, recherchez une étape dans tout le voyage. Depuis sa fiche, ouvrez le trajet vers la prochaine étape de la journée si les deux lieux sont renseignés. Google Maps reçoit les lieux lorsque vous ouvrez le lien.
+
 ## Démarrer en local
 
 Avec Node.js 22 ou plus récent et Python 3 pour le serveur d’exemple, depuis la racine du dépôt :
