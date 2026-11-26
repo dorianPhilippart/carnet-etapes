@@ -1,3 +1,5 @@
+import {findStops} from './search.js';
+import {stopMapLink, nextLeg} from './route.js';
 import {getTrips, saveTrip, deleteTrip, subscribe, syncInfo} from './store.js';
 import {icon, logo} from './icons.js';
 
@@ -77,6 +79,31 @@ function daily(trip,day,stops) {
   return `<section class="daily"><div class="day-heading"><h3>${capitalize(fmt(day,{weekday:'long',day:'numeric',month:'long'}))}</h3><span>Jour ${number}</span></div>
   ${stops.length ? `<ol class="timeline">${stops.map(stopRow).join('')}</ol>` : `<div class="day-empty">${icon('route',24)}<p>Aucune étape prévue pour cette journée.</p>${button('add-stop','Ajouter une étape','plus')}</div>`}</section>`;
 }
+function refreshSearch(trip) {
+  const matches = findStops(trip.stops, editor.querySelector('#stop-query').value, editor.querySelector('#stop-category').value);
+  const count = matches.length;
+  editor.querySelector('#search-count').textContent = count ? plural(count,'étape') : 'Aucune étape trouvée.';
+  const list = editor.querySelector('#search-results');
+  const markup = matches.map(stop => `<li><button type="button" data-action="search-result" data-id="${text(stop.id)}">
+    <strong>${text(stop.title)}</strong><span>${text(fmt(stop.date,{weekday:'short',day:'numeric',month:'short'}))}${stop.time?' · '+text(stop.time):''}${stop.place?' · '+text(stop.place):''}</span>
+    </button></li>`).join('');
+  if (modalState.markup !== markup) {
+    const focused = list.contains(document.activeElement) && document.activeElement.dataset.id;
+    modalState.markup = markup;
+    list.innerHTML = markup;
+    if (focused) (Array.from(list.querySelectorAll('button')).find(item => item.dataset.id === focused) || editor.querySelector('#stop-query')).focus();
+  }
+}
+
+function openStopSearch(trip) {
+  const options = Object.entries(categories).map(([key,label]) => `<option value="${key}">${label}</option>`).join('');
+  showDialog('Rechercher une étape', `<div class="search-fields">
+    <label>Dans tout le voyage<input id="stop-query" type="search" autocomplete="off" placeholder="Nom, lieu ou note"></label>
+    <label>Catégorie<select id="stop-category"><option value="">Toutes les catégories</option>${options}</select></label></div>
+    <p role="status" id="search-count"></p><ul id="search-results"></ul>`, {type:'search',trip});
+  refreshSearch(trip);
+}
+
 function itinerary(trip) {
   const sorted=ordered(trip.stops);
   let days='';
@@ -89,7 +116,7 @@ function itinerary(trip) {
   }
   return `<div class="page-heading"><h1>Mon itinéraire</h1>${button('add-stop','Ajouter une étape','plus','primary')}</div>
     ${hero(trip)}<div class="body-grid"><section class="program" aria-label="Programme">
-    <div class="section-heading"><h2>Au programme</h2><button type="button" class="view-mode" data-action="toggle-days" aria-pressed="${allDays}">${icon(allDays?'calendar':'list',16)}${allDays?'Par journée':'Tout voir'}</button></div>
+    <div class="section-heading"><h2>Au programme</h2><div class="program-actions"><button class="view-mode" type="button" data-action="find-stop" aria-label="Rechercher une étape" title="Rechercher une étape"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6"/></svg><span>Rechercher</span></button><button type="button" class="view-mode" data-action="toggle-days" aria-pressed="${allDays}">${icon(allDays?'calendar':'list',16)}${allDays?'Par journée':'Tout voir'}</button></div></div>
     ${allDays?'':dayTabs(trip)}${days}</section>${summary(trip)}</div>`;
 }
 function travelCards(trips) {
@@ -113,6 +140,11 @@ function render() {
   if(editor.open && (!info.online || info.state==='error' || info.state==='reauth' || modalState?.owner !== (info.user?.id ?? null))) {
     editor.close();
     editor.replaceChildren(); modalState=null;
+  }
+  if (editor.open && modalState?.type === 'search') {
+    const current = trips.find(item => item.id === modalState.trip.id);
+    if (current) { modalState.trip = current; refreshSearch(current); }
+    else editor.close();
   }
   const connectionText=!info.online?'Hors connexion':info.state==='syncing'?'Synchronisation…':info.state==='error'?'Synchronisation interrompue':info.state==='reauth'?'Session expirée':info.user && info.lastSync?'À jour':'Synchronisation';
   document.querySelector('#connection').innerHTML=icon('cloud',17)+'<span>'+connectionText+'</span>';
@@ -166,12 +198,18 @@ function stopForm(trip,stop) {
 }
 function stopDetail(trip,stop) {
   const cat=Object.hasOwn(categories,stop.category)?stop.category:'autre';
+  const mapUrl = stopMapLink(stop);
+  const leg = nextLeg(ordered(trip.stops), stop);
+  const nextStep = leg ? `<section class="detail-note" aria-label="Prochaine étape">
+    <h3>Prochaine étape</h3><p>${leg.next.time ? text(leg.next.time)+' · ' : ''}${text(leg.next.title)}</p>
+    ${leg.url ? `<a href="${text(leg.url)}" target="_blank" rel="noopener noreferrer">Ouvrir le trajet dans Google Maps</a>` : `<p>${text(leg.hint)}</p>`}
+  </section>` : '';
   showDialog(stop.title,`<div class="stop-detail"><span class="category ${cat}">${icon(cat,15)} ${categories[cat]}</span>
     <p>${icon('calendar',18)}${text(fmt(stop.date,{weekday:'long',day:'numeric',month:'long',year:'numeric'}))}</p>
     ${stop.time?`<p>${icon('clock',18)}${text(stop.time)}</p>`:''}
-    ${stop.place?`<p>${icon('pin',18)}${text(stop.place)} <a href="https://www.google.com/maps/search/?api=1&amp;query=${text(encodeURIComponent(stop.place))}" target="_blank" rel="noopener noreferrer">Carte</a></p>`:''}
+    ${mapUrl?`<p>${icon('pin',18)}${text(stop.place)} <a href="${text(mapUrl)}" target="_blank" rel="noopener noreferrer">Voir sur Google Maps</a></p>`:''}
     ${stop.notes?`<div class="detail-note">${text(stop.notes)}</div>`:''}
-    </div><footer class="form-actions">${syncInfo().user ? button('remove-stop','Supprimer','trash','danger-text')+button('edit-stop','Modifier','edit','primary') : button('close','Fermer','close')}</footer>`,{type:'detail',trip,stop});
+    ${nextStep}</div><footer class="form-actions">${syncInfo().user ? button('remove-stop','Supprimer','trash','danger-text')+button('edit-stop','Modifier','edit','primary') : button('close','Fermer','close')}</footer>`,{type:'detail',trip,stop});
 }
 function tripMenu(trip) {
   showDialog(trip.title,`<div class="menu-options">${button('edit-trip','Modifier le voyage','edit')}${button('switch-trip','Mes voyages','bag')}${button('remove-trip','Supprimer le voyage','trash','danger-text')}</div>`,{type:'options',trip});
@@ -229,6 +267,7 @@ editor.addEventListener('submit', async event=>{
   finally { submit.disabled=false; }
 });
 editor.addEventListener('input', event=>{
+  if (modalState?.type==='search') { refreshSearch(modalState.trip); return; }
   const form=event.target.form;
   if(form?.id==='trip-form' && event.target.name==='startDate') {
     const end=form.elements.endDate;
@@ -263,6 +302,12 @@ document.addEventListener('click',event=>{
     case 'next-week': date=shiftDay(trip.startDate,Math.min(duration(trip)-1,(Math.floor(dayDistance(trip.startDate,date)/7)+1)*7));break;
     case 'toggle-days': allDays=!allDays;break;
     case 'add-stop': stopForm(trip);return;
+    case 'find-stop': openStopSearch(trip);return;
+    case 'search-result': {
+      const stop=trip.stops.find(item=>item.id===control.dataset.id);
+      if(stop) { date=stop.date; allDays=false; render(); stopDetail(trip,stop); editor.querySelector('[data-action="close"]').focus(); }
+      return;
+    }
     case 'stop-detail': {const copy=trip;const stop=copy.stops.find(s=>s.id===control.dataset.id);if(stop)stopDetail(copy,stop);return;}
     case 'edit-stop': stopForm(trip,modalState.stop);return;
     case 'remove-stop': confirmRemoval(trip,modalState.stop);return;
