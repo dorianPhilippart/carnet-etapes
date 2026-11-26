@@ -17,6 +17,8 @@ Carnet d’étapes est un carnet de voyage en français pour préparer un séjou
 
 Dans **Au programme**, recherchez une étape dans tout le voyage. Depuis sa fiche, ouvrez le trajet vers la prochaine étape de la journée si les deux lieux sont renseignés. Google Maps reçoit les lieux lorsque vous ouvrez le lien.
 
+Dans **Découvrir**, choisissez une ville ou une région, une durée de 1 à 4 jours et des envies. Le catalogue propose six villes. Une fois connecté, vous pouvez créer un séjour avec ses étapes ou ajouter une activité au voyage sélectionné. Les idées servent de base à la planification, sans horaires ni disponibilités en direct.
+
 ## Démarrer en local
 
 Avec Node.js 22 ou plus récent et Python 3 pour le serveur d’exemple, depuis la racine du dépôt :

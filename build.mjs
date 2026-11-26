@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const publicFiles = [
   'index.html', 'styles.css', 'account.css',
   'ui.js', 'icons.js', 'store.js', 'cloud.js', 'account.js', 'demo.js', 'config.js',
-  'route.js', 'search.js', 'legacy.js', 'register.js', 'sw.js', 'manifest.webmanifest',
+  'route.js', 'search.js', 'discover.js', 'legacy.js', 'register.js', 'sw.js', 'manifest.webmanifest',
   'assets/japon.webp', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/icon-maskable.png',
 ];
 

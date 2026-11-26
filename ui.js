@@ -1,10 +1,11 @@
+import {destinations, durations, interests, suggest} from './discover.js';
 import {findStops} from './search.js';
 import {stopMapLink, nextLeg} from './route.js';
 import {getTrips, saveTrip, deleteTrip, subscribe, syncInfo} from './store.js';
 import {icon, logo} from './icons.js';
 
 const categories = {visite:'Visite', repas:'Repas', transport:'Transport', hebergement:'Hébergement', autre:'Autre'};
-const pages = {voyages:'Mes voyages', itineraire:'Itinéraire', notes:'Notes de voyage'};
+const pages = {voyages:'Mes voyages', itineraire:'Itinéraire', notes:'Notes de voyage', decouvrir:'Découvrir'};
 const main = document.querySelector('#main');
 const editor = document.querySelector('#editor');
 const dayMillis = 86400000;
@@ -23,6 +24,7 @@ const plural = (n,singular,other = singular+'s') => n+' '+(n===1 ? singular : ot
 const ordered = stops => [...stops].sort((a,b)=>a.date.localeCompare(b.date) || (a.time || '99:99').localeCompare(b.time || '99:99'));
 let selectedId;
 try { sessionStorage.removeItem('escale.activeTrip'); } catch {}
+let preferences = {destination:'', themes:[], days:2};
 let date, dateTrip, allDays = false, noticeTimeout, modalState;
 const page = () => Object.hasOwn(pages,location.hash.slice(1)) ? location.hash.slice(1) : 'itineraire';
 const activeTrip = (trips=getTrips()) => trips.find(t => t.id === selectedId) || trips[0];
@@ -134,6 +136,43 @@ function notesPage(trip) {
     ${hero(trip)}<div class="notes-layout"><section class="note-sheet"><div class="side-title">${smallTitle('book','Mon carnet')}</div><p class="long-note">${text(trip.notes || 'Aucune note pour ce voyage.')}</p></section>
     <section class="stop-notes"><h2>Notes des étapes</h2>${withNotes.length?withNotes.map(stop=>`<button type="button" data-action="stop-detail" data-id="${text(stop.id)}"><strong>${text(stop.title)}</strong><span>${text(fmt(stop.date,{day:'numeric',month:'long'}))}</span><p>${text(stop.notes)}</p></button>`).join(''):'<p>Les notes ajoutées aux étapes apparaîtront ici.</p>'}</section></div>`;
 }
+function discovery(trip, signedIn) {
+  const {destination, themes, days} = preferences;
+  const options = Object.entries(destinations).map(([id,name]) =>
+    `<option value="${id}" ${destination===id?'selected':''}>${name}</option>`).join('');
+  const showAdd = signedIn && trip;
+  const cards = suggest(preferences).map(idea => {
+    const count = idea.matches.length;
+    return `<article class="discovery-card">
+      <p class="discovery-country">${idea.country} · ${plural(idea.duration,'jour')}</p><h2>${idea.city}</h2>
+      <details><summary>Voir le programme proposé</summary><ol>${idea.plan.map(activity=>`<li>${activity.title}</li>`).join('')}</ol></details>
+      <button type="button" class="btn primary" data-action="suggest-trip" data-id="${idea.id}">Préparer ce séjour</button>
+      <h3>${plural(count,'activité proposée','activités proposées')}</h3>
+      <ul class="discovery-activities">${idea.matches.map(activity=>`<li><div><strong>${activity.title}</strong><small>${interests[activity.theme]}</small></div>
+        ${showAdd?`<button type="button" class="btn secondary" data-action="suggest-stop" data-city="${idea.id}" data-id="${activity.id}" aria-label="Ajouter ${text(activity.title)}">Ajouter</button>`:''}</li>`).join('')}</ul>
+    </article>`;
+  }).join('');
+  return `<div class="page-heading"><h1>Découvrir</h1></div>
+    <form id="discover-form" class="discovery-filters">
+      <div class="search-fields"><label>Destination<select name="destination"><option value="">Toutes les destinations</option><option ${destination==='Europe'?'selected':''}>Europe</option><option ${destination==='Asie'?'selected':''}>Asie</option>${options}</select></label>
+      <label>Durée<select name="days">${durations.map(day=>`<option value="${day}" ${day===days?'selected':''}>${plural(day,'jour')}</option>`).join('')}</select></label></div>
+      <fieldset><legend>Vos envies</legend><div class="discovery-themes">${Object.entries(interests).map(([key,label])=>`<label><input type="checkbox" name="theme" value="${key}" ${themes.includes(key)?'checked':''}>${label}</label>`).join('')}</div></fieldset>
+      <button type="submit" class="btn primary">Voir les suggestions</button>
+    </form>
+    <section aria-labelledby="discovery-title" class="discovery-results"><h2 id="discovery-title" tabindex="-1">${plural(suggest(preferences).length,'idée de séjour','idées de séjour')}</h2>
+      ${showAdd?`<p>Les activités peuvent être ajoutées à « ${text(trip.title)} ».</p>`:''}
+      <div class="discovery-grid">${cards}</div></section>`;
+}
+
+main.addEventListener('submit', event => {
+  if (event.target.id !== 'discover-form') return;
+  event.preventDefault();
+  const values = new FormData(event.target);
+  preferences = {destination:values.get('destination'), themes:values.getAll('theme'), days:Number(values.get('days'))};
+  render();
+  main.querySelector('#discovery-title').focus();
+});
+
 function render() {
   const trips=getTrips(), trip=activeTrip(trips), view=page();
   const info=syncInfo();
@@ -152,12 +191,13 @@ function render() {
     date=trip.startDate;dateTrip=trip.id;allDays=false;
   }
   document.title=pages[view]+' · Carnet d’étapes';
-  document.querySelector('#navigation').innerHTML=Object.entries(pages).map(([key,label])=>`<a href="#${key}" ${key===view?'aria-current="page"':''}>${icon({voyages:'bag',itineraire:'route',notes:'book'}[key],20)}<span>${label}</span></a>`).join('');
+  document.querySelector('#navigation').innerHTML=Object.entries(pages).map(([key,label])=>`<a href="#${key}" ${key===view?'aria-current="page"':''}>${icon({voyages:'bag',itineraire:'route',notes:'book',decouvrir:'compass'}[key],20)}<span>${label}</span></a>`).join('');
   document.querySelector('#crumb').innerHTML=`${icon('compass',17)}<span>Mon espace</span>${icon('right',13)}<strong>${pages[view]}</strong>`;
   if(!info.online || info.state==='reauth' || info.state==='error') {
     main.innerHTML='<section class="empty-state"><h1>Carnet indisponible</h1><p>Vérifiez votre connexion pour accéder aux voyages.</p>'+button('account','Ouvrir mon compte','person')+'</section>';
     return;
   }
+  if(view==='decouvrir') { main.innerHTML=discovery(trip, Boolean(info.user)); return; }
   if(view==='voyages') main.innerHTML=`<div class="page-heading"><h1>Mes voyages</h1>${trips.length?button('new-trip','Nouveau voyage','plus','primary'):''}</div>${trips.length?`<div class="trip-grid">${travelCards(trips)}</div>`:empty()}`;
   else if(!trip) main.innerHTML=`<div class="page-heading"><h1>${view==='itineraire'?'Mon itinéraire':pages[view]}</h1></div>${empty()}`;
   else main.innerHTML=view==='notes'?notesPage(trip):itinerary(trip);
@@ -180,19 +220,19 @@ function showDialog(title,body,state) {
 const field=(label,name,type,value,attrs='')=>`<label>${label}<input name="${name}" type="${type}" value="${text(value)}" ${attrs}></label>`;
 const area=(label,name,value)=>`<label>${label}<textarea name="${name}" rows="4" maxlength="4000">${text(value)}</textarea></label>`;
 const actions=(submit='Enregistrer')=>`<footer class="form-actions"><button type="button" class="btn secondary" data-action="close">Annuler</button><button type="submit" class="btn primary">${submit}</button></footer>`;
-function tripForm(trip) {
+function tripForm(trip, idea) {
   const today=localToday();
   showDialog(trip?'Modifier le voyage':'Nouveau voyage',`<form id="trip-form">
-  ${field('Nom du voyage','title','text',trip?.title || '', 'required maxlength="120" placeholder="Ex. Un été en Italie"')}
-  ${field('Destination','destination','text',trip?.destination || '', 'required maxlength="160" placeholder="Ville, région ou pays"')}
-  <div class="form-pair">${field('Départ','startDate','date',trip?.startDate||today,'required')}${field('Retour','endDate','date',trip?.endDate||today,'required')}</div>
-  ${area('Note de voyage','notes',trip?.notes || '')}${actions(trip?'Enregistrer':'Créer le voyage')}</form>`,{type:'trip',trip});
+  ${field('Nom du voyage','title','text',trip?.title || (idea ? 'Séjour à '+idea.city : ''), 'required maxlength="120" placeholder="Ex. Un été en Italie"')}
+  ${field('Destination','destination','text',trip?.destination || (idea ? idea.city+', '+idea.country : ''), 'required maxlength="160" placeholder="Ville, région ou pays"')}
+  <div class="form-pair">${field('Départ','startDate','date',trip?.startDate||today,'required')}${field('Retour','endDate','date',trip?.endDate||(idea ? shiftDay(today,idea.duration-1) : today),'required')}</div>
+  ${area('Note de voyage','notes',trip?.notes || '')}${actions(trip?'Enregistrer':'Créer le voyage')}</form>`,{type:'trip',trip,idea});
 }
-function stopForm(trip,stop) {
-  const catOptions=Object.entries(categories).map(([v,label])=>`<option value="${v}" ${(stop?.category||'visite')===v?'selected':''}>${label}</option>`).join('');
+function stopForm(trip,stop,preset) {
+  const catOptions=Object.entries(categories).map(([v,label])=>`<option value="${v}" ${(stop?.category||preset?.category||'visite')===v?'selected':''}>${label}</option>`).join('');
   showDialog(stop?'Modifier l’étape':'Ajouter une étape',`<form id="stop-form">
-    ${field('Nom de l’étape','title','text',stop?.title||'', 'required maxlength="120" placeholder="Ex. Visite du temple"')}
-    ${field('Lieu ou adresse','place','text',stop?.place||'', 'maxlength="200" placeholder="Ex. Asakusa, Tokyo"')}
+    ${field('Nom de l’étape','title','text',stop?.title||preset?.title||'', 'required maxlength="120" placeholder="Ex. Visite du temple"')}
+    ${field('Lieu ou adresse','place','text',stop?.place||preset?.place||'', 'maxlength="200" placeholder="Ex. Asakusa, Tokyo"')}
     <div class="form-pair">${field('Date','date','date',stop?.date||date,`required min="${text(trip.startDate)}" max="${text(trip.endDate)}"`)}${field('Heure (facultatif)','time','time',stop?.time||'')}</div>
     <label>Catégorie<select name="category">${catOptions}</select></label>${area('Notes','notes',stop?.notes || '')}${actions(stop?'Enregistrer':'Ajouter l’étape')}</form>`,{type:'stop',trip,stop});
 }
@@ -232,7 +272,7 @@ editor.addEventListener('submit', async event=>{
   const submit=form.querySelector('[type="submit"]');
   if(submit.disabled) return;
   const data=Object.fromEntries([...new FormData(form)].map(([k,v])=>[k,String(v).trim()]));
-  const {type,trip,stop}=modalState;
+  const {type,trip,stop,idea}=modalState;
   submit.disabled=true;
   try {
     let result;
@@ -240,7 +280,12 @@ editor.addEventListener('submit', async event=>{
       if(!data.title || !data.destination) throw Error('Indiquez un nom et une destination.');
       if(data.startDate > data.endDate) throw Error('Le retour doit avoir lieu à partir du jour de départ.');
       if(trip?.stops.some(s=>s.date<data.startDate || s.date>data.endDate)) throw Error('Des étapes se trouvent hors de ces dates. Déplacez-les avant de raccourcir le voyage.');
-      const updated={...trip,...data,id:trip?.id || crypto.randomUUID(),stops:trip?.stops || []};
+      if(idea && dayDistance(data.startDate,data.endDate)+1 < idea.duration) throw Error('Prévoyez '+plural(idea.duration,'jour')+' pour ce programme.');
+      const planned=idea?.plan.map((activity,index)=>({
+        id:crypto.randomUUID(), title:activity.title, place:activity.place, category:activity.category,
+        date:shiftDay(data.startDate,index), time:'', notes:''
+      }));
+      const updated={...trip,...data,id:trip?.id || crypto.randomUUID(),stops:trip?.stops || planned || []};
       remember(await saveTrip(updated,trip));
       openPage('itineraire');
       result=trip?'Voyage modifié.':'Voyage créé.';
@@ -251,6 +296,7 @@ editor.addEventListener('submit', async event=>{
       remember(await saveTrip({...trip,stops},trip));
       dateTrip=selectedId;
       date=updated.date;
+      if(page()==='decouvrir') openPage('itineraire');
       result=stop?'Étape modifiée.':'Étape ajoutée.';
     } else if(type==='notes') {
       remember(await saveTrip({...trip,notes:data.notes},trip));result='Note enregistrée.';
@@ -271,7 +317,8 @@ editor.addEventListener('input', event=>{
   const form=event.target.form;
   if(form?.id==='trip-form' && event.target.name==='startDate') {
     const end=form.elements.endDate;
-    if(!end.value || end.value<event.target.value) end.value=event.target.value;
+    if(modalState?.idea && event.target.value) end.value=shiftDay(event.target.value,modalState.idea.duration-1);
+    else if(!end.value || end.value<event.target.value) end.value=event.target.value;
   }
 });
 editor.addEventListener('click',event=>{
@@ -288,6 +335,18 @@ document.addEventListener('click',event=>{
   const trip=dialogTrip || activeTrip();
   switch(act) {
     case 'account': document.dispatchEvent(new Event('escale-account'));return;
+    case 'suggest-trip': {
+      if (!syncInfo().user) { document.dispatchEvent(new Event('escale-account')); return; }
+      const idea=suggest(preferences).find(item=>item.id===control.dataset.id);
+      if (idea) tripForm(null,idea);
+      return;
+    }
+    case 'suggest-stop': {
+      const idea=suggest(preferences).find(item=>item.id===control.dataset.city);
+      const activity=idea?.matches.find(item=>item.id===control.dataset.id);
+      if (trip && activity && syncInfo().user) stopForm(trip,null,activity);
+      return;
+    }
     case 'new-trip': tripForm(null);return;
     case 'close': editor.close();return;
     case 'select-trip': remember(control.dataset.id);openPage('itineraire');break;
