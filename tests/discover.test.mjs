@@ -47,3 +47,15 @@ test('Le secours Overpass répond si le premier serveur est indisponible', async
   assert.deepEqual((await fetchSuggestion(city,{days:1,themes:[]})).matches,[]);
   assert.deepEqual(hosts,['overpass.private.coffee','overpass-api.de']);
 });
+
+test('Wikipédia fournit des résultats réels lorsque les deux serveurs Overpass échouent', async t => {
+  t.mock.method(globalThis,'fetch',async url => {
+    const endpoint = new URL(url);
+    if (endpoint.hostname !== 'fr.wikipedia.org') return new Response('',{status:503});
+    assert.match(endpoint.searchParams.get('srsearch'),/nearcoord:5km,35\.01,135\.76/);
+    return Response.json({query:{search:[{pageid:123,title:'Musée trouvé'}]}});
+  });
+  const idea=await fetchSuggestion(city,{themes:['visite'],days:1});
+  assert.equal(idea.via,'Wikipédia');
+  assert.equal(idea.plan[0].source,'https://fr.wikipedia.org/?curid=123');
+});

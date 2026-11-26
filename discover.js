@@ -81,11 +81,41 @@ export function makeSuggestion(city, elements, {themes = [], days = 2}) {
   return {...city, duration, matches, plan:ordered.slice(0,duration)};
 }
 
+const wikiTerms = {
+  visite: 'musée OR monument OR château',
+  nature: 'parc OR jardin OR réserve',
+  repas: 'marché OR gastronomie OR halles',
+  quartier: 'quartier OR promenade OR place',
+};
+
+async function encyclopediaSuggestion(city, preferences, signal) {
+  const duration = durations.includes(preferences.days) ? preferences.days : 2;
+  const groups = await Promise.allSettled(themesFor(preferences.themes).map(async theme => {
+    const search = new URLSearchParams({action:'query', list:'search', format:'json', origin:'*',
+      srnamespace:'0', srlimit:'4', srprop:'',
+      srsearch:'nearcoord:5km,'+city.latitude+','+city.longitude+' ('+wikiTerms[theme]+')'});
+    const data = await json('https://fr.wikipedia.org/w/api.php?'+search, {signal, timeoutMs:7500});
+    if (!Array.isArray(data.query?.search)) throw new Error('Réponse Wikipédia indisponible.');
+    return data.query.search.filter(row => Number.isSafeInteger(row.pageid) && typeof row.title === 'string')
+      .map(row => ({
+        id:'wiki-'+row.pageid, title:row.title.slice(0,120), theme, category:theme==='repas'?'repas':'visite',
+        place:[row.title, city.city, city.country].filter(Boolean).join(', ').slice(0,200),
+        source:'https://fr.wikipedia.org/?curid='+row.pageid
+      }));
+  }));
+  if (groups.every(group=>group.status==='rejected')) throw new Error('La recherche de lieux est momentanément indisponible. Réessayez dans un instant.');
+  const seen = new Set();
+  const lists = groups.map(group=>group.status==='fulfilled' ? group.value : []);
+  const matches = [0,1,2,3].flatMap(index=>lists.flatMap(list=>list[index]?[list[index]]:[]))
+    .filter(place=>!seen.has(place.id) && seen.add(place.id));
+  return {...city, duration, matches, plan:matches.slice(0,duration), via:'Wikipédia'};
+}
+
 export async function fetchSuggestion(city, preferences, signal) {
   const query = new URLSearchParams({data:activityQuery(city,preferences.themes)});
   for (const endpoint of overpass) {
     try {
-      const data = await json(endpoint+'?'+query, {signal, timeoutMs:12000});
+      const data = await json(endpoint+'?'+query, {signal, timeoutMs:7000});
       if (Array.isArray(data.elements) && !data.remark) {
         return makeSuggestion(city,data.elements,preferences);
       }
@@ -93,5 +123,5 @@ export async function fetchSuggestion(city, preferences, signal) {
       if (signal?.aborted) throw error;
     }
   }
-  throw new Error('La recherche de lieux est momentanément indisponible. Réessayez dans un instant.');
+  return encyclopediaSuggestion(city, preferences, signal);
 }

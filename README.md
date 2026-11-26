@@ -17,7 +17,7 @@ Carnet d’étapes est un carnet de voyage en français pour préparer un séjou
 
 Dans **Au programme**, recherchez une étape dans tout le voyage. Depuis sa fiche, ouvrez le trajet vers la prochaine étape de la journée si les deux lieux sont renseignés. Google Maps reçoit les lieux lorsque vous ouvrez le lien.
 
-Dans **Découvrir**, cherchez une ville, choisissez le résultat voulu, puis lancez la recherche d’activités avec une durée de 1 à 4 jours et vos envies. Le texte de la ville est envoyé à Open-Meteo (données GeoNames). Les coordonnées de la ville et les catégories sont envoyées à l’API Overpass d’OpenStreetMap. Le programme est préparé à partir des lieux trouvés. Les résultats dépendent de la couverture d’OpenStreetMap et les horaires ne sont pas vérifiés.
+Dans **Découvrir**, cherchez une ville, choisissez le résultat voulu, puis lancez la recherche d’activités avec une durée de 1 à 4 jours et vos envies. Le texte de la ville est envoyé à Open-Meteo (données GeoNames). Les coordonnées de la ville et les catégories sont envoyées à l’API Overpass d’OpenStreetMap. Si Overpass est indisponible, l’application cherche les lieux dans Wikipédia. Le programme est préparé à partir des lieux trouvés. Les résultats dépendent de la couverture d’OpenStreetMap et les horaires ne sont pas vérifiés.
 
 ## Démarrer en local
 
