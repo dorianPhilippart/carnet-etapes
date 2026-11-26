@@ -1,4 +1,4 @@
-import {durations, interests, findCities, fetchSuggestion} from './discover.js';
+import {durations, radii, interests, findCities, fetchSuggestion, scheduleActivities} from './discover.js';
 import {findStops} from './search.js';
 import {stopMapLink, nextLeg} from './route.js';
 import {getTrips, saveTrip, deleteTrip, subscribe, syncInfo} from './store.js';
@@ -24,7 +24,9 @@ const plural = (n,singular,other = singular+'s') => n+' '+(n===1 ? singular : ot
 const ordered = stops => [...stops].sort((a,b)=>a.date.localeCompare(b.date) || (a.time || '99:99').localeCompare(b.time || '99:99'));
 let selectedId;
 try { sessionStorage.removeItem('escale.activeTrip'); } catch {}
-let preferences = {destination:'', themes:[], days:2};
+let preferences = {destination:'', themes:[], days:2, radius:5};
+const dayAssignments = new Map();
+let citiesFor = '';
 let cities = [], suggestion, discoveryError = '', discoveryRequest;
 let date, dateTrip, allDays = false, noticeTimeout, modalState;
 const page = () => Object.hasOwn(pages,location.hash.slice(1)) ? location.hash.slice(1) : 'itineraire';
@@ -137,24 +139,36 @@ function notesPage(trip) {
     ${hero(trip)}<div class="notes-layout"><section class="note-sheet"><div class="side-title">${smallTitle('book','Mon carnet')}</div><p class="long-note">${text(trip.notes || 'Aucune note pour ce voyage.')}</p></section>
     <section class="stop-notes"><h2>Notes des étapes</h2>${withNotes.length?withNotes.map(stop=>`<button type="button" data-action="stop-detail" data-id="${text(stop.id)}"><strong>${text(stop.title)}</strong><span>${text(fmt(stop.date,{day:'numeric',month:'long'}))}</span><p>${text(stop.notes)}</p></button>`).join(''):'<p>Les notes ajoutées aux étapes apparaîtront ici.</p>'}</section></div>`;
 }
+function discoveryPlan(idea) {
+  const days = scheduleActivities(idea.matches,dayAssignments,idea.duration);
+  return `<ol class="discovery-days">${days.map((activities,index)=>`<li><strong>Jour ${index+1}</strong>
+    ${activities.length ? `<ul>${activities.map(activity=>`<li>${text(activity.title)}</li>`).join('')}</ul>` : '<p>Libre</p>'}</li>`).join('')}</ol>`;
+}
+
 function discovery(trip, signedIn) {
-  const {destination, themes, days} = preferences;
+  const {destination, themes, days, radius} = preferences;
   const showAdd = signedIn && trip;
   const idea = suggestion;
   const results = idea?.matches.length ? `<article class="discovery-card">
     <p class="discovery-country">${text(idea.country)} · ${plural(idea.duration,'jour')}</p><h2>${text(idea.city)}</h2>
     ${idea.via ? `<p>Suggestions repérées dans ${text(idea.via)}.</p>` : ''}
-    <details><summary>Voir le programme proposé</summary><ol>${idea.plan.map(activity=>`<li>${text(activity.title)}</li>`).join('')}</ol>
-    ${idea.plan.length < idea.duration ? '<p>Les autres jours restent libres.</p>' : ''}</details>
-    <button type="button" class="btn primary" data-action="suggest-trip">Préparer ce séjour</button>
+    <section class="discovery-preview"><h3>Mon programme</h3><p>Choisis le jour de chaque activité dans les résultats.</p>
+    <div id="discovery-days" aria-live="polite">${discoveryPlan(idea)}</div>
+    <button type="button" class="btn primary" data-action="suggest-trip">Préparer ce séjour</button></section>
     <h3>${plural(idea.matches.length,'activité trouvée','activités trouvées')}</h3>
-    <ul class="discovery-activities">${idea.matches.map(activity=>`<li><div><a href="${text(activity.source)}" target="_blank" rel="noopener noreferrer"><strong>${text(activity.title)}</strong></a><small>${interests[activity.theme]}</small></div>
-      ${showAdd?`<button type="button" class="btn secondary" data-action="suggest-stop" data-id="${text(activity.id)}" aria-label="Ajouter ${text(activity.title)}">Ajouter</button>`:''}</li>`).join('')}</ul>
+    <ul class="discovery-activities">${idea.matches.map(activity=>`<li><div>
+      <a href="${text(activity.source)}" target="_blank" rel="noopener noreferrer"><strong>${text(activity.title)}</strong></a>
+      <small>${interests[activity.theme]}${Number.isFinite(activity.distance)?' · '+activity.distance.toLocaleString('fr-FR',{maximumFractionDigits:1})+' km du centre à vol d’oiseau':''}</small>
+      ${activity.map?`<a class="discovery-map" href="${text(activity.map)}" target="_blank" rel="noopener noreferrer">Voir sur la carte</a>`:''}
+      </div><div class="discovery-place-actions"><select data-plan-day="${text(activity.id)}" aria-label="Jour pour ${text(activity.title)}">
+        <option value="0">Hors programme</option>${Array.from({length:idea.duration},(_,i)=>`<option value="${i+1}" ${dayAssignments.get(activity.id)===i+1?'selected':''}>Jour ${i+1}</option>`).join('')}
+      </select>${showAdd?`<button type="button" class="btn secondary" data-action="suggest-stop" data-id="${text(activity.id)}" aria-label="Ajouter ${text(activity.title)} au voyage en cours">Ajouter</button>`:''}</div></li>`).join('')}</ul>
     </article>` : '';
   return `<div class="page-heading"><h1>Découvrir</h1></div>
     <form id="discover-form" class="discovery-filters">
       <div class="search-fields"><label>Ville<input name="destination" type="search" minlength="2" maxlength="100" required autocomplete="off" placeholder="Ex. Kyoto" value="${text(destination)}"></label>
-      <label>Durée<select name="days">${durations.map(day=>`<option value="${day}" ${day===days?'selected':''}>${plural(day,'jour')}</option>`).join('')}</select></label></div>
+      <label>Durée<select name="days">${durations.map(day=>`<option value="${day}" ${day===days?'selected':''}>${plural(day,'jour')}</option>`).join('')}</select></label>
+      <label>Rayon autour de la ville<select name="radius">${radii.map(value=>`<option value="${value}" ${value===radius?'selected':''}>${value} km</option>`).join('')}</select></label></div>
       <fieldset><legend>Vos envies</legend><div class="discovery-themes">${Object.entries(interests).map(([key,label])=>`<label><input type="checkbox" name="theme" value="${key}" ${themes.includes(key)?'checked':''}>${label}</label>`).join('')}</div></fieldset>
       <button type="submit" class="btn primary">Chercher la ville</button>
     </form>
@@ -170,8 +184,19 @@ function discovery(trip, signedIn) {
 
 function discoveryChoices(form) {
   const values = new FormData(form);
-  return {destination:values.get('destination').trim(), themes:values.getAll('theme'), days:Number(values.get('days'))};
+  return {destination:values.get('destination').trim(), themes:values.getAll('theme'), days:Number(values.get('days')), radius:Number(values.get('radius'))};
 }
+main.addEventListener('change', event => {
+  if (event.target.form?.id === 'discover-form') preferences = discoveryChoices(event.target.form);
+  if (!suggestion || !event.target.dataset.planDay) return;
+  dayAssignments.set(event.target.dataset.planDay,Number(event.target.value));
+  main.querySelector('#discovery-days').innerHTML = discoveryPlan(suggestion);
+});
+main.addEventListener('input', event => {
+  if (event.target.name === 'destination' && event.target.form?.id === 'discover-form') {
+    preferences = {...preferences, destination:event.target.value};
+  }
+});
 main.addEventListener('submit', async event => {
   if (!['discover-form','discover-city'].includes(event.target.id)) return;
   event.preventDefault();
@@ -179,12 +204,18 @@ main.addEventListener('submit', async event => {
   const findCity = event.target.id === 'discover-form';
   const city = findCity ? null : cities.find(item=>item.id===new FormData(event.target).get('city'));
   if (values.destination.length < 2 || (!findCity && !city)) return;
+  if (!findCity && values.destination !== citiesFor) {
+    discoveryError = 'Le nom de ville a changé. Lancez d’abord Chercher la ville.';
+    render();
+    return;
+  }
   discoveryRequest?.abort();
   const request = new AbortController();
   discoveryRequest = request;
   preferences = values;
   discoveryError = '';
   suggestion = null;
+  dayAssignments.clear();
   if(findCity) cities = [];
   render();
   try {
@@ -192,10 +223,14 @@ main.addEventListener('submit', async event => {
       const found = await findCities(values.destination, request.signal);
       if (discoveryRequest !== request) return;
       cities = found;
+      citiesFor = values.destination;
       if (!cities.length) discoveryError = 'Aucune ville trouvée. Vérifiez le nom saisi.';
     } else {
       const result = await fetchSuggestion(city, values, request.signal);
-      if (discoveryRequest === request) suggestion = result;
+      if (discoveryRequest === request) {
+        suggestion = result;
+        result.plan.forEach((activity,index)=>dayAssignments.set(activity.id,index+1));
+      }
     }
   } catch(error) {
     if(discoveryRequest === request) discoveryError = error.name === 'TimeoutError' || error instanceof TypeError ?
@@ -204,7 +239,7 @@ main.addEventListener('submit', async event => {
     if(discoveryRequest === request) {
       discoveryRequest = null;
       render();
-      if(page()==='decouvrir') main.querySelector(cities.length && findCity ? '#discover-city select' : '#discovery-status')?.focus();
+      if(page()==='decouvrir') main.querySelector(cities.length && findCity ? '#discover-city select' : suggestion?.matches.length ? '[data-action="suggest-trip"]' : '#discovery-status')?.focus();
     }
   }
 });
@@ -317,10 +352,10 @@ editor.addEventListener('submit', async event=>{
       if(data.startDate > data.endDate) throw Error('Le retour doit avoir lieu à partir du jour de départ.');
       if(trip?.stops.some(s=>s.date<data.startDate || s.date>data.endDate)) throw Error('Des étapes se trouvent hors de ces dates. Déplacez-les avant de raccourcir le voyage.');
       if(idea && dayDistance(data.startDate,data.endDate)+1 < idea.duration) throw Error('Prévoyez '+plural(idea.duration,'jour')+' pour ce programme.');
-      const planned=idea?.plan.map((activity,index)=>({
+      const planned=idea?.schedule.flatMap((activities,index)=>activities.map(activity=>({
         id:crypto.randomUUID(), title:activity.title, place:activity.place, category:activity.category,
         date:shiftDay(data.startDate,index), time:'', notes:''
-      }));
+      })));
       const updated={...trip,...data,id:trip?.id || crypto.randomUUID(),stops:trip?.stops || planned || []};
       remember(await saveTrip(updated,trip));
       openPage('itineraire');
@@ -374,7 +409,7 @@ document.addEventListener('click',event=>{
     case 'suggest-trip': {
       if (!syncInfo().user) { document.dispatchEvent(new Event('escale-account')); return; }
       const idea=suggestion;
-      if (idea) tripForm(null,idea);
+      if (idea) tripForm(null,{...idea,schedule:scheduleActivities(idea.matches,dayAssignments,idea.duration)});
       return;
     }
     case 'suggest-stop': {

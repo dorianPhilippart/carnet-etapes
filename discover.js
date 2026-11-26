@@ -2,6 +2,8 @@ export const interests = {
   visite: 'Culture', nature: 'Plein air', repas: 'Gastronomie', quartier: 'Quartiers et balades',
 };
 export const durations = [1, 2, 3, 4];
+export const radii = [2, 5, 10];
+const radiusKm = value => radii.includes(value) ? value : 5;
 const geocoding = 'https://geocoding-api.open-meteo.com/v1/search';
 const overpass = ['https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter'];
 const tags = {
@@ -36,17 +38,34 @@ function themesFor(themes) {
   return selected.length ? selected : Object.keys(tags);
 }
 
-export function activityQuery(city, themes) {
+export function activityQuery(city, themes, radius) {
   const {latitude, longitude} = city;
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude)>90 || Math.abs(longitude)>180) {
     throw new Error('Les coordonnées de la destination sont invalides.');
   }
-  const around = '(around:5000,'+latitude.toFixed(5)+','+longitude.toFixed(5)+');';
+  const around = '(around:'+radiusKm(radius)*1000+','+latitude.toFixed(5)+','+longitude.toFixed(5)+');';
   return '[out:json][timeout:14];' + themesFor(themes).map(theme => {
     const selectors = Object.entries(tags[theme]).map(([key, regex]) =>
       'nwr["name"]["'+key+'"~"'+regex.source+'"]'+around);
     return '('+selectors.join('')+');out center 65;';
   }).join('');
+}
+
+export function distanceKm(city, lat, lon) {
+  if (![city.latitude,city.longitude,lat,lon].every(Number.isFinite)) return null;
+  const radians = Math.PI / 180;
+  const a = Math.sin((lat-city.latitude)*radians/2)**2 +
+    Math.cos(city.latitude*radians)*Math.cos(lat*radians)*Math.sin((lon-city.longitude)*radians/2)**2;
+  return 12742*Math.asin(Math.sqrt(Math.min(1,a)));
+}
+
+function locationDetails(city, lat, lon) {
+  const distance = distanceKm(city,lat,lon);
+  return distance===null ? {} : {distance, map:'https://www.openstreetmap.org/?mlat='+lat+'&mlon='+lon+'#map=16/'+lat+'/'+lon};
+}
+
+export function scheduleActivities(activities, assignments, duration) {
+  return Array.from({length:duration}, (_,index) => activities.filter(activity=>assignments.get(activity.id)===index+1));
 }
 
 export function makeSuggestion(city, elements, {themes = [], days = 2}) {
@@ -55,14 +74,9 @@ export function makeSuggestion(city, elements, {themes = [], days = 2}) {
   const seen = new Set();
   const byTheme = selected.map(theme => {
     const matching = elements.filter(row => Object.entries(tags[theme]).some(([key,re]) => re.test(row.tags?.[key] || '')));
-    function distance(row) {
-      const lat = row.lat ?? row.center?.lat;
-      const lon = row.lon ?? row.center?.lon;
-      return Number.isFinite(lat) && Number.isFinite(lon) ?
-        (lat-city.latitude)**2 + ((lon-city.longitude)*Math.cos(city.latitude*Math.PI/180))**2 : Infinity;
-    }
+    const distance = row => distanceKm(city, row.lat ?? row.center?.lat, row.lon ?? row.center?.lon);
     function rank(row) { return (row.tags?.wikidata ? 2 : 0) + (row.tags?.wikipedia ? 1 : 0); }
-    const ranked = matching.sort((a,b) => rank(b)-rank(a) || distance(a)-distance(b));
+    const ranked = matching.sort((a,b) => rank(b)-rank(a) || (distance(a) ?? Infinity)-(distance(b) ?? Infinity));
     const result = [];
     for (const row of ranked) {
       const title = (row.tags?.['name:fr'] || row.tags?.name || '').trim().slice(0,120);
@@ -70,7 +84,7 @@ export function makeSuggestion(city, elements, {themes = [], days = 2}) {
       seen.add(title.toLocaleLowerCase('fr'));
       const street = [row.tags['addr:housenumber'], row.tags['addr:street']].filter(Boolean).join(' ');
       const place = [title, street, city.city, city.country].filter(Boolean).join(', ').slice(0,200);
-      result.push({id:row.type+'-'+row.id, title, place, theme, category:theme==='repas'?'repas':'visite',
+      result.push({id:row.type+'-'+row.id, title, place, theme, ...locationDetails(city,row.lat ?? row.center?.lat,row.lon ?? row.center?.lon), category:theme==='repas'?'repas':'visite',
         source:'https://www.openstreetmap.org/'+row.type+'/'+row.id});
       if (result.length === 4) break;
     }
@@ -93,7 +107,7 @@ async function encyclopediaSuggestion(city, preferences, signal) {
   const groups = await Promise.allSettled(themesFor(preferences.themes).map(async theme => {
     const search = new URLSearchParams({action:'query', list:'search', format:'json', origin:'*',
       srnamespace:'0', srlimit:'4', srprop:'',
-      srsearch:'nearcoord:5km,'+city.latitude+','+city.longitude+' ('+wikiTerms[theme]+')'});
+      srsearch:'nearcoord:'+radiusKm(preferences.radius)+'km,'+city.latitude+','+city.longitude+' ('+wikiTerms[theme]+')'});
     const data = await json('https://fr.wikipedia.org/w/api.php?'+search, {signal, timeoutMs:7500});
     if (!Array.isArray(data.query?.search)) throw new Error('Réponse Wikipédia indisponible.');
     return data.query.search.filter(row => Number.isSafeInteger(row.pageid) && typeof row.title === 'string')
@@ -108,11 +122,24 @@ async function encyclopediaSuggestion(city, preferences, signal) {
   const lists = groups.map(group=>group.status==='fulfilled' ? group.value : []);
   const matches = [0,1,2,3].flatMap(index=>lists.flatMap(list=>list[index]?[list[index]]:[]))
     .filter(place=>!seen.has(place.id) && seen.add(place.id));
+  if(matches.length) {
+    const query = new URLSearchParams({action:'query', prop:'coordinates', format:'json', origin:'*',
+      pageids:matches.map(place=>place.id.slice(5)).join('|')});
+    try {
+      const data = await json('https://fr.wikipedia.org/w/api.php?'+query, {signal, timeoutMs:4000});
+      for(const place of matches) {
+        const coordinates = data.query?.pages?.[place.id.slice(5)]?.coordinates?.[0];
+        if(coordinates?.globe === 'earth') Object.assign(place,locationDetails(city,coordinates.lat,coordinates.lon));
+      }
+    } catch(error) {
+      if(signal?.aborted) throw error;
+    }
+  }
   return {...city, duration, matches, plan:matches.slice(0,duration), via:'Wikipédia'};
 }
 
 export async function fetchSuggestion(city, preferences, signal) {
-  const query = new URLSearchParams({data:activityQuery(city,preferences.themes)});
+  const query = new URLSearchParams({data:activityQuery(city,preferences.themes,preferences.radius)});
   for (const endpoint of overpass) {
     try {
       const data = await json(endpoint+'?'+query, {signal, timeoutMs:7000});

@@ -52,10 +52,24 @@ test('Wikipédia fournit des résultats réels lorsque les deux serveurs Overpas
   t.mock.method(globalThis,'fetch',async url => {
     const endpoint = new URL(url);
     if (endpoint.hostname !== 'fr.wikipedia.org') return new Response('',{status:503});
+    if(endpoint.searchParams.get('prop')==='coordinates') return Response.json({query:{pages:{123:{coordinates:[{lat:35.02,lon:135.76,globe:'earth'}]}}}});
     assert.match(endpoint.searchParams.get('srsearch'),/nearcoord:5km,35\.01,135\.76/);
     return Response.json({query:{search:[{pageid:123,title:'Musée trouvé'}]}});
   });
   const idea=await fetchSuggestion(city,{themes:['visite'],days:1});
   assert.equal(idea.via,'Wikipédia');
   assert.equal(idea.plan[0].source,'https://fr.wikipedia.org/?curid=123');
+  assert.ok(idea.plan[0].distance>1);
+  assert.match(idea.plan[0].map,/mlat=35.02/);
+});
+
+test('Le rayon choisi est borné et les activités sont placées sur les jours choisis', async () => {
+  const {distanceKm, scheduleActivities} = await import('../discover.js');
+  assert.match(activityQuery(city,[],2),/around:2000,/);
+  assert.match(activityQuery(city,[],900),/around:5000,/);
+  assert.equal(distanceKm(city,city.latitude,city.longitude),0);
+  assert.ok(distanceKm(city,city.latitude+.01,city.longitude)>1);
+  assert.equal(distanceKm(city,undefined,undefined),null);
+  const places=[{id:'a'},{id:'b'},{id:'c'}];
+  assert.deepEqual(scheduleActivities(places,new Map([['a',2],['c',2]]),3),[[],[places[0],places[2]],[]]);
 });
