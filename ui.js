@@ -1,4 +1,4 @@
-import {destinations, durations, interests, suggest} from './discover.js';
+import {durations, interests, findCities, fetchSuggestion} from './discover.js';
 import {findStops} from './search.js';
 import {stopMapLink, nextLeg} from './route.js';
 import {getTrips, saveTrip, deleteTrip, subscribe, syncInfo} from './store.js';
@@ -25,6 +25,7 @@ const ordered = stops => [...stops].sort((a,b)=>a.date.localeCompare(b.date) || 
 let selectedId;
 try { sessionStorage.removeItem('escale.activeTrip'); } catch {}
 let preferences = {destination:'', themes:[], days:2};
+let cities = [], suggestion, discoveryError = '', discoveryRequest;
 let date, dateTrip, allDays = false, noticeTimeout, modalState;
 const page = () => Object.hasOwn(pages,location.hash.slice(1)) ? location.hash.slice(1) : 'itineraire';
 const activeTrip = (trips=getTrips()) => trips.find(t => t.id === selectedId) || trips[0];
@@ -138,39 +139,73 @@ function notesPage(trip) {
 }
 function discovery(trip, signedIn) {
   const {destination, themes, days} = preferences;
-  const options = Object.entries(destinations).map(([id,name]) =>
-    `<option value="${id}" ${destination===id?'selected':''}>${name}</option>`).join('');
   const showAdd = signedIn && trip;
-  const cards = suggest(preferences).map(idea => {
-    const count = idea.matches.length;
-    return `<article class="discovery-card">
-      <p class="discovery-country">${idea.country} · ${plural(idea.duration,'jour')}</p><h2>${idea.city}</h2>
-      <details><summary>Voir le programme proposé</summary><ol>${idea.plan.map(activity=>`<li>${activity.title}</li>`).join('')}</ol></details>
-      <button type="button" class="btn primary" data-action="suggest-trip" data-id="${idea.id}">Préparer ce séjour</button>
-      <h3>${plural(count,'activité proposée','activités proposées')}</h3>
-      <ul class="discovery-activities">${idea.matches.map(activity=>`<li><div><strong>${activity.title}</strong><small>${interests[activity.theme]}</small></div>
-        ${showAdd?`<button type="button" class="btn secondary" data-action="suggest-stop" data-city="${idea.id}" data-id="${activity.id}" aria-label="Ajouter ${text(activity.title)}">Ajouter</button>`:''}</li>`).join('')}</ul>
-    </article>`;
-  }).join('');
+  const idea = suggestion;
+  const results = idea?.matches.length ? `<article class="discovery-card">
+    <p class="discovery-country">${text(idea.country)} · ${plural(idea.duration,'jour')}</p><h2>${text(idea.city)}</h2>
+    <details><summary>Voir le programme proposé</summary><ol>${idea.plan.map(activity=>`<li>${text(activity.title)}</li>`).join('')}</ol>
+    ${idea.plan.length < idea.duration ? '<p>Les autres jours restent libres.</p>' : ''}</details>
+    <button type="button" class="btn primary" data-action="suggest-trip">Préparer ce séjour</button>
+    <h3>${plural(idea.matches.length,'activité trouvée','activités trouvées')}</h3>
+    <ul class="discovery-activities">${idea.matches.map(activity=>`<li><div><a href="${text(activity.source)}" target="_blank" rel="noopener noreferrer"><strong>${text(activity.title)}</strong></a><small>${interests[activity.theme]}</small></div>
+      ${showAdd?`<button type="button" class="btn secondary" data-action="suggest-stop" data-id="${text(activity.id)}" aria-label="Ajouter ${text(activity.title)}">Ajouter</button>`:''}</li>`).join('')}</ul>
+    </article>` : '';
   return `<div class="page-heading"><h1>Découvrir</h1></div>
     <form id="discover-form" class="discovery-filters">
-      <div class="search-fields"><label>Destination<select name="destination"><option value="">Toutes les destinations</option><option ${destination==='Europe'?'selected':''}>Europe</option><option ${destination==='Asie'?'selected':''}>Asie</option>${options}</select></label>
+      <div class="search-fields"><label>Ville<input name="destination" type="search" minlength="2" maxlength="100" required autocomplete="off" placeholder="Ex. Kyoto" value="${text(destination)}"></label>
       <label>Durée<select name="days">${durations.map(day=>`<option value="${day}" ${day===days?'selected':''}>${plural(day,'jour')}</option>`).join('')}</select></label></div>
       <fieldset><legend>Vos envies</legend><div class="discovery-themes">${Object.entries(interests).map(([key,label])=>`<label><input type="checkbox" name="theme" value="${key}" ${themes.includes(key)?'checked':''}>${label}</label>`).join('')}</div></fieldset>
-      <button type="submit" class="btn primary">Voir les suggestions</button>
+      <button type="submit" class="btn primary">Chercher la ville</button>
     </form>
-    <section aria-labelledby="discovery-title" class="discovery-results"><h2 id="discovery-title" tabindex="-1">${plural(suggest(preferences).length,'idée de séjour','idées de séjour')}</h2>
-      ${showAdd?`<p>Les activités peuvent être ajoutées à « ${text(trip.title)} ».</p>`:''}
-      <div class="discovery-grid">${cards}</div></section>`;
+    ${cities.length ? `<form id="discover-city" class="discovery-filters discovery-results"><label>Ville trouvée<select name="city">${cities.map(city=>`<option value="${text(city.id)}" ${city.id===idea?.id?'selected':''}>${text([...new Set([city.city,city.region,city.country].filter(Boolean))].join(', '))}</option>`).join('')}</select></label>
+    <button type="submit" class="btn primary">Rechercher des activités</button></form>` : ''}
+    <section class="discovery-results" aria-label="Suggestions">
+      <p id="discovery-status" role="status" tabindex="-1">${discoveryRequest?'Recherche en ligne…':text(discoveryError || (idea && !idea.matches.length ? 'Aucun lieu trouvé pour ces envies. Essayez d’autres catégories.' : ''))}</p>
+      ${results && showAdd?`<p>Tu peux ajouter les activités à « ${text(trip.title)} ».</p>`:''}
+      ${results ? `<div class="discovery-grid">${results}</div>` : ''}
+      <p>Villes par <a href="https://open-meteo.com/en/docs/geocoding-api" target="_blank" rel="noopener noreferrer">Open-Meteo</a> et <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a>. Lieux © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">contributeurs OpenStreetMap</a>.</p>
+    </section>`;
 }
 
-main.addEventListener('submit', event => {
-  if (event.target.id !== 'discover-form') return;
+function discoveryChoices(form) {
+  const values = new FormData(form);
+  return {destination:values.get('destination').trim(), themes:values.getAll('theme'), days:Number(values.get('days'))};
+}
+main.addEventListener('submit', async event => {
+  if (!['discover-form','discover-city'].includes(event.target.id)) return;
   event.preventDefault();
-  const values = new FormData(event.target);
-  preferences = {destination:values.get('destination'), themes:values.getAll('theme'), days:Number(values.get('days'))};
+  const values = discoveryChoices(main.querySelector('#discover-form'));
+  const findCity = event.target.id === 'discover-form';
+  const city = findCity ? null : cities.find(item=>item.id===new FormData(event.target).get('city'));
+  if (values.destination.length < 2 || (!findCity && !city)) return;
+  discoveryRequest?.abort();
+  const request = new AbortController();
+  discoveryRequest = request;
+  preferences = values;
+  discoveryError = '';
+  suggestion = null;
+  if(findCity) cities = [];
   render();
-  main.querySelector('#discovery-title').focus();
+  try {
+    if(findCity) {
+      const found = await findCities(values.destination, request.signal);
+      if (discoveryRequest !== request) return;
+      cities = found;
+      if (!cities.length) discoveryError = 'Aucune ville trouvée. Vérifiez le nom saisi.';
+    } else {
+      const result = await fetchSuggestion(city, values, request.signal);
+      if (discoveryRequest === request) suggestion = result;
+    }
+  } catch(error) {
+    if(discoveryRequest === request) discoveryError = error.name === 'TimeoutError' || error instanceof TypeError ?
+      'La recherche ne répond pas. Vérifiez la connexion et réessayez.' : error.message;
+  } finally {
+    if(discoveryRequest === request) {
+      discoveryRequest = null;
+      render();
+      if(page()==='decouvrir') main.querySelector(cities.length && findCity ? '#discover-city select' : '#discovery-status')?.focus();
+    }
+  }
 });
 
 function render() {
@@ -337,12 +372,12 @@ document.addEventListener('click',event=>{
     case 'account': document.dispatchEvent(new Event('escale-account'));return;
     case 'suggest-trip': {
       if (!syncInfo().user) { document.dispatchEvent(new Event('escale-account')); return; }
-      const idea=suggest(preferences).find(item=>item.id===control.dataset.id);
+      const idea=suggestion;
       if (idea) tripForm(null,idea);
       return;
     }
     case 'suggest-stop': {
-      const idea=suggest(preferences).find(item=>item.id===control.dataset.city);
+      const idea=suggestion;
       const activity=idea?.matches.find(item=>item.id===control.dataset.id);
       if (trip && activity && syncInfo().user) stopForm(trip,null,activity);
       return;

@@ -1,22 +1,39 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {suggest} from '../discover.js';
+import {activityQuery, makeSuggestion, findCities, fetchSuggestion} from '../discover.js';
 
-test('Une ville précise et deux envies filtrent les activités', () => {
-  const [idea, ...others] = suggest({destination:'kyoto', themes:['nature','repas'], days:2});
-  assert.equal(idea.city,'Kyoto');
-  assert.deepEqual(idea.matches.map(activity=>activity.theme),['nature','repas']);
-  assert.deepEqual(idea.plan,idea.matches);
-  assert.equal(others.length,0);
+const city = {id:'20',city:'Kyoto',country:'Japon',latitude:35.01,longitude:135.76};
+const row = (id, name, tags) => ({type:'node',id,lat:35,lon:135.7,tags:{name,...tags}});
+
+test('La requête n’envoie que des coordonnées validées et les catégories choisies', () => {
+  const query=activityQuery(city,['nature','inconnue']);
+  assert.match(query,/around:5000,35\.01000,135\.76000/);
+  assert.match(query,/\["leisure"/);
+  assert.doesNotMatch(query,/restaurant|inconnue|Kyoto/);
+  assert.throws(()=>activityQuery({...city, latitude:');'}, []), /coordonnées/);
 });
 
-test('La région et la durée s’appliquent aux séjours, avec des idées complémentaires', () => {
-  const ideas = suggest({destination:'Europe',themes:['repas'],days:4});
-  assert.equal(ideas.length,3);
-  for(const idea of ideas) {
-    assert.equal(idea.duration,4);
-    assert.equal(idea.plan[0].theme,'repas');
-    assert.equal(new Set(idea.plan.map(activity=>activity.id)).size,4);
-  }
-  assert.deepEqual(suggest({destination:'absente'}),[]);
+test('Le programme utilise les résultats distants, filtre et déduplique les lieux', () => {
+  const places=[row(1,'Jardin',{leisure:'park'}), row(2,'Jardin',{leisure:'garden'}),
+    row(3,'Marché',{amenity:'marketplace'}),row(4,'Musée',{tourism:'museum'})];
+  const idea=makeSuggestion(city,places,{themes:['nature','repas'],days:4});
+  assert.deepEqual(idea.plan.map(p=>p.title),['Jardin','Marché']);
+  assert.equal(idea.duration,4);
+  assert.equal(idea.matches[0].source,'https://www.openstreetmap.org/node/1');
+});
+
+test('Les deux étapes appellent des services distants sans transmettre de profil', async t => {
+  const requests=[];
+  t.mock.method(globalThis,'fetch',async (url,init) => {
+    requests.push({url,init});
+    return Response.json(requests.length===1 ? {results:[{...city,id:20,name:'Kyoto',feature_code:'PPLA'}]} :
+      {elements:[row(42,'Musée',{tourism:'museum'})]});
+  });
+  const [destination]=await findCities('Kyoto');
+  const result=await fetchSuggestion(destination,{days:1,themes:['visite']});
+  assert.equal(result.matches[0].title,'Musée');
+  assert.equal(new URL(requests[0].url).searchParams.get('name'),'Kyoto');
+  assert.equal(requests[1].init.method,'POST');
+  assert.equal(requests[1].init.credentials,'omit');
+  assert.doesNotMatch(requests[1].init.body.get('data'),/Kyoto/);
 });
