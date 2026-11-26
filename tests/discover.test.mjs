@@ -33,7 +33,17 @@ test('Les deux étapes appellent des services distants sans transmettre de profi
   const result=await fetchSuggestion(destination,{days:1,themes:['visite']});
   assert.equal(result.matches[0].title,'Musée');
   assert.equal(new URL(requests[0].url).searchParams.get('name'),'Kyoto');
-  assert.equal(requests[1].init.method,'POST');
+  assert.equal(new URL(requests[1].url).hostname,'overpass.private.coffee');
   assert.equal(requests[1].init.credentials,'omit');
-  assert.doesNotMatch(requests[1].init.body.get('data'),/Kyoto/);
+  assert.doesNotMatch(new URL(requests[1].url).searchParams.get('data'),/Kyoto/);
+});
+
+test('Le secours Overpass répond si le premier serveur est indisponible', async t => {
+  const hosts=[];
+  t.mock.method(globalThis,'fetch',async url => {
+    hosts.push(new URL(url).hostname);
+    return hosts.length === 1 ? new Response('',{status:503}) : Response.json({elements:[]});
+  });
+  assert.deepEqual((await fetchSuggestion(city,{days:1,themes:[]})).matches,[]);
+  assert.deepEqual(hosts,['overpass.private.coffee','overpass-api.de']);
 });
