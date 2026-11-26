@@ -143,6 +143,7 @@ function discovery(trip, signedIn) {
   const idea = suggestion;
   const results = idea?.matches.length ? `<article class="discovery-card">
     <p class="discovery-country">${text(idea.country)} · ${plural(idea.duration,'jour')}</p><h2>${text(idea.city)}</h2>
+    ${idea.via ? `<p>Suggestions repérées dans ${text(idea.via)}.</p>` : ''}
     <details><summary>Voir le programme proposé</summary><ol>${idea.plan.map(activity=>`<li>${text(activity.title)}</li>`).join('')}</ol>
     ${idea.plan.length < idea.duration ? '<p>Les autres jours restent libres.</p>' : ''}</details>
     <button type="button" class="btn primary" data-action="suggest-trip">Préparer ce séjour</button>
